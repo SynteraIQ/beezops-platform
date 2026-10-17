@@ -10,6 +10,26 @@
         ".next/**",
         "!.next/cache/**",
         "dist/**"
+      ],
+      "env": [
+        "DATABASE_URL",
+        "GITHUB_APP_CLIENT_ID",
+        "GITHUB_APP_CLIENT_SECRET",
+        "GITHUB_APP_ID",
+        "GITHUB_APP_PRIVATE_KEY",
+        "GITHUB_APP_SLUG",
+        "GITHUB_CLIENT_ID",
+        "GITHUB_CLIENT_SECRET",
+        "GITHUB_TOKEN",
+        "NEXTAUTH_SECRET",
+        "NEXTAUTH_URL",
+        "OPENAI_API_KEY",
+        "OPENAI_MODEL",
+        "REDZONE_BASE_REF",
+        "REDZONE_DEV_MODE",
+        "REDZONE_EXPERT_MAP_PR_LIMIT",
+        "REDZONE_PR_LIMIT",
+        "VERCEL_CONNECT_SLACK_CONNECTOR"
       ]
     },
     "dev": {
