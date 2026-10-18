@@ -96,10 +96,6 @@ h1 { margin: 17px 0 11px; font: 700 clamp(34px, 4vw, 46px)/1.08 Manrope, sans-se
 .secondary-button:disabled { opacity: .6; cursor: not-allowed; }
 .secondary-button:not(:disabled) { color: #e0e2e5; cursor: pointer; }
 .connection-error { flex-basis: 100%; color: #ff9b8a; font-size: 10px; }
-.connection-note { display: flex; align-items: flex-start; gap: 9px; padding: 12px 13px; border: 1px solid #39312a; border-radius: 7px; background: #191612; }
-.note-icon { width: 16px; height: 16px; display: grid; flex: 0 0 16px; place-items: center; border: 1px solid #735044; border-radius: 50%; color: #e3a18b; font: 500 9px 'DM Mono', monospace; }
-.connection-note p { margin: 0; color: #a9958c; font-size: 10px; line-height: 1.6; }
-.connection-note strong { color: #dfb3a4; font-weight: 600; }
 .settings-card { max-width: 640px; padding: 20px; border: 1px solid #303238; border-radius: 9px; background: #111315; }
 .settings-card h2 { margin-top: 12px; font-size: 15px; }
 .settings-card p { color: #c2c5ca; font-size: 11px; }
@@ -133,3 +129,19 @@ h1 { margin: 17px 0 11px; font: 700 clamp(34px, 4vw, 46px)/1.08 Manrope, sans-se
 .setup-footnote { margin: 20px 0 0; color: #777d86; font-size: 10px; line-height: 1.7; }
 @media (max-width: 850px) { .sidebar { width: 205px; flex-basis: 205px; } .topbar { padding: 0 24px; } .content { padding: 38px 24px 25px; } .process-step { padding: 13px; } }
 @media (max-width: 680px) { .sidebar { width: 61px; flex-basis: 61px; padding: 20px 7px 13px; } .brand { justify-content: center; padding: 0; } .brand > span:last-child, .workspace-label, .workspace-name, .workspace-caret, .nav-label, .account-identity, .account-block .sign-out-button { display: none; } .workspace-switcher { justify-content: center; padding: 7px 0; } .workspace-icon { border: 0; } .side-nav { margin-top: 24px; } .nav-item { justify-content: center; padding: 11px 0; } .nav-icon { font-size: 17px; } .settings-link { margin-bottom: 9px; } .account-block { justify-content: center; padding: 13px 0 2px; } .topbar { height: 55px; padding: 0 14px; } .environment-badge, .topbar-divider { display: none; } .content { padding: 30px 16px 22px; } h1 { font-size: 36px; } .welcome-card { align-items: flex-start; flex-direction: column; padding: 17px; } .process-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .process-step:nth-child(2) { border-right: 0; } .process-step:nth-child(-n+2) { border-bottom: 1px solid #25282d; } .section-heading { align-items: flex-start; flex-direction: column; } .provider-card { align-items: flex-start; flex-wrap: wrap; padding: 15px; } .provider-copy { flex-basis: calc(100% - 60px); } .secondary-button { margin-left: 58px; } .compact-empty { align-items: flex-start; flex-wrap: wrap; } .compact-empty > a { margin-left: 45px; } .page-footer { line-height: 1.5; } .login-page { padding: 24px 16px; } .sign-in-card { padding: 30px 24px; } .setup-page { padding: 24px 16px; } .setup-card { margin-top: 10vh; padding: 26px 21px; } }
+.google-drive-connections { display: grid; gap: 12px; margin-top: 14px; }
+.google-drive-actions { display: flex; align-items: center; gap: 9px; }
+.connection-list { overflow: hidden; border: 1px solid #2c2f34; border-radius: 8px; background: #101214; }
+.connection-list-heading { display: flex; align-items: center; justify-content: space-between; padding: 11px 13px; border-bottom: 1px solid #25282d; }
+.connection-list-heading h3 { margin: 0; color: #cdd0d5; font-size: 10px; font-weight: 600; }
+.connection-list-heading > span { min-width: 20px; padding: 2px 6px; border-radius: 999px; background: #25282d; color: #a1a6af; font: 500 9px 'DM Mono', monospace; text-align: center; }
+.connection-list-empty { margin: 0; padding: 13px; color: #858b95; font-size: 10px; }
+.connection-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 13px; border-bottom: 1px solid #202328; }
+.connection-row:last-child { border-bottom: 0; }
+.connection-row-copy { display: grid; min-width: 0; gap: 5px; }
+.connection-row-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.connection-row-title strong { color: #dfe1e5; font-size: 10px; font-weight: 600; }
+.connection-id, .connection-date { overflow-wrap: anywhere; color: #777e88; font: 400 9px 'DM Mono', monospace; }
+.disconnect-button { flex: 0 0 auto; padding: 7px 9px; border: 1px solid #493532; border-radius: 6px; background: #211715; color: #e3a18b; font-size: 9px; cursor: pointer; }
+.disconnect-button:disabled { opacity: .6; cursor: not-allowed; }
+@media (max-width: 680px) { .connection-row { align-items: flex-start; flex-direction: column; } .disconnect-button { align-self: flex-start; } }
