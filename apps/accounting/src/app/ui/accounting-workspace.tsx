@@ -5,6 +5,8 @@ import { authOptions, googleOAuthConfigured } from "../../auth";
 import { getWorkspaceForUser } from "../../tenant-service";
 import { SignOutButton } from "../sign-in-button";
 import { GoogleDriveConnect } from "./google-drive-connect";
+import { InvoiceIntakeWorkspace } from "./invoice-intake-workspace";
+import { invoiceIntakeExtractionWorkflow } from "../../automations/invoice-intake/definition";
 
 export const workspaceSections = [
   "overview",
@@ -171,13 +173,32 @@ function WorkspaceSectionContent({ section, userEmail }: { section: WorkspaceSec
   }
 
   if (section === "invoices") {
-    return <EmptySection icon="▤" title="No invoices imported yet" detail="Invoice file selection and import from Google Drive are not available yet. Once intake is added, this page will show extracted fields, context, recommendations, and evidence." action={{ href: "/connections", label: "Manage connections" }} />;
+    return <InvoiceIntakeWorkspace />;
   }
   if (section === "approvals") {
     return <EmptySection icon="✓" title="No decisions waiting for approval" detail="When an invoice needs a person’s judgment, it will appear here with the supporting evidence and any unresolved questions." action={{ href: "/invoices", label: "View invoices" }} />;
   }
   if (section === "automations") {
-    return <EmptySection icon="↻" title="No automations configured" detail="Invoice intake, context gathering, verification, and approval routing will be managed here. Run history will be available alongside each automation." action={{ href: "/connections", label: "Connect an invoice source" }} />;
+    return (
+      <div className="workspace-content">
+        <section className="automation-template-card">
+          <div className="automation-template-header">
+            <div><span className="section-kicker">PREDEFINED WORKFLOW · V{invoiceIntakeExtractionWorkflow.version}</span><h2>{invoiceIntakeExtractionWorkflow.name}</h2></div>
+            <span className="automation-template-state">Available</span>
+          </div>
+          <p>{invoiceIntakeExtractionWorkflow.purpose} It validates extracted fields and routes incomplete results to review.</p>
+          <ol className="automation-template-steps">
+            {invoiceIntakeExtractionWorkflow.steps.map((step, index) => (
+              <li key={step.id}><span>{String(index + 1).padStart(2, "0")}</span>{step.label}</li>
+            ))}
+          </ol>
+          <div className="automation-template-footer">
+            <span>Manual Extract is enabled. Automatic Drive discovery is the next trigger to add.</span>
+            <Link className="primary-link" href="/invoices">Open invoices <span>↗</span></Link>
+          </div>
+        </section>
+      </div>
+    );
   }
   if (section === "knowledge") {
     return <EmptySection icon="◉" title="Knowledge will appear here" detail="Review the policies, vendor context, and validated learnings used to ground invoice recommendations. Each item will show its source and review status." />;
