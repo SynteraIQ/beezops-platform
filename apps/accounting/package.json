@@ -15,7 +15,8 @@
     "next": "^16.4.0",
     "next-auth": "^4.24.15",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "workflow": "^5.2.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
