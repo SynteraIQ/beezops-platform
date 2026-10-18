@@ -26,6 +26,7 @@
         "NEXTAUTH_SECRET",
         "NEXTAUTH_URL",
         "OPENAI_API_KEY",
+        "OPENAI_INVOICE_MODEL",
         "OPENAI_MODEL",
         "REDZONE_BASE_REF",
         "REDZONE_DEV_MODE",

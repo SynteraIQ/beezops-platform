@@ -1,8 +1,9 @@
 import { getServerSession } from "next-auth";
-import { and, desc, eq, sql } from "drizzle-orm";
-import { documentSourceItems, documentSources, getDatabase, providerConnections } from "@beezops/database";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { agentRuns, documentSourceItems, documentSources, getDatabase, providerConnections } from "@beezops/database";
 import { authOptions } from "./auth";
 import { getWorkspaceForUser } from "./tenant-service";
+import { parseCanonicalInvoice, type CanonicalInvoice } from "./types/invoice";
 
 const nangoApiBaseUrl = "https://api.nango.dev";
 
@@ -58,6 +59,8 @@ export interface GoogleDriveDocumentSource {
   connectionId: string;
   name: string;
   path: string;
+  files?: GoogleDriveSourceFile[];
+  filesError?: string;
   provider: "google-drive";
   status: string;
   lastSyncedAt: string | null;
@@ -71,6 +74,25 @@ export interface GoogleDriveSourceSyncResult {
   changedCount: number;
   unchangedCount: number;
   syncedAt: string;
+  files: GoogleDriveSourceFile[];
+}
+
+export interface GoogleDriveSourceFile {
+  id: string;
+  name: string;
+  mimeType: string;
+  modifiedTime: string | null;
+  extraction?: { runId: string; invoice: CanonicalInvoice };
+}
+
+export interface GoogleDriveInvoicePdf {
+  organizationId: string;
+  sourceId: string;
+  sourceItemId: string;
+  fileId: string;
+  modifiedTime: string | null;
+  fileName: string;
+  content: Uint8Array;
 }
 
 async function getSignedInWorkspace() {
@@ -337,6 +359,7 @@ export async function listGoogleDriveDocumentSources(): Promise<GoogleDriveDocum
   const rows = await getDatabase()
     .select({
       id: documentSources.id,
+      folderId: documentSources.externalSourceId,
       connectionId: providerConnections.externalConnectionId,
       name: documentSources.name,
       path: documentSources.path,
@@ -352,10 +375,82 @@ export async function listGoogleDriveDocumentSources(): Promise<GoogleDriveDocum
       eq(documentSources.provider, "google-drive"),
     ))
     .orderBy(desc(documentSources.createdAt));
-  return rows.map((row) => ({
-    ...row,
-    provider: "google-drive",
-    lastSyncedAt: row.lastSyncedAt?.toISOString() ?? null,
+  const database = getDatabase();
+  return Promise.all(rows.map(async (row): Promise<GoogleDriveDocumentSource> => {
+    let files: GoogleDriveSourceFile[] = [];
+    let filesError: string | undefined;
+    if (row.status === "active" && row.connectionStatus === "active" && row.lastSyncedAt) {
+      try {
+        const indexedItems = await database
+          .select({ id: documentSourceItems.id, externalItemId: documentSourceItems.externalItemId, externalVersion: documentSourceItems.externalVersion })
+          .from(documentSourceItems)
+          .where(and(
+            eq(documentSourceItems.organizationId, account.workspace.id),
+            eq(documentSourceItems.documentSourceId, row.id),
+          ));
+        const indexedByFileId = new Map(indexedItems.map((item) => [item.externalItemId, item]));
+        const currentDriveFiles = await listGoogleDriveSourceFiles(row.connectionId, row.folderId);
+        const currentFiles = currentDriveFiles.filter((file) => indexedByFileId.has(file.id));
+        const itemIds = indexedItems.map((item) => item.id);
+        const latestExtractionByFileId = new Map<string, { runId: string; invoice: CanonicalInvoice }>();
+        if (itemIds.length > 0) {
+          const runs = await database
+            .select({ id: agentRuns.id, sourceId: agentRuns.sourceId, result: agentRuns.result })
+            .from(agentRuns)
+            .where(and(
+              eq(agentRuns.organizationId, account.workspace.id),
+              eq(agentRuns.productKey, "accounting"),
+              eq(agentRuns.agentKey, "invoice-extractor"),
+              eq(agentRuns.status, "completed"),
+              inArray(agentRuns.sourceId, itemIds),
+            ))
+            .orderBy(desc(agentRuns.createdAt));
+          const itemById = new Map(indexedItems.map((item) => [item.id, item]));
+          for (const run of runs) {
+            if (!run.sourceId || !run.result?.invoice) continue;
+            const item = itemById.get(run.sourceId);
+            if (!item || latestExtractionByFileId.has(item.externalItemId)) continue;
+            try {
+              const source = run.result.source;
+              const extractedVersion = source && typeof source === "object" && !Array.isArray(source)
+                ? source.modifiedTime
+                : undefined;
+              if (extractedVersion !== item.externalVersion) continue;
+              latestExtractionByFileId.set(item.externalItemId, {
+                runId: run.id,
+                invoice: parseCanonicalInvoice(run.result.invoice),
+              });
+            } catch {
+              console.warn("[invoices:history] Skipping an invalid stored invoice extraction", { runId: run.id });
+            }
+          }
+        }
+        files = currentFiles.map((file) => {
+          const indexedItem = indexedByFileId.get(file.id);
+          return {
+            ...file,
+            extraction: indexedItem?.externalVersion === file.modifiedTime
+              ? latestExtractionByFileId.get(file.id)
+              : undefined,
+          };
+        });
+      } catch (error) {
+        console.error("[invoices:google-drive] Could not restore indexed source items", { sourceId: row.id, error });
+        filesError = "Could not reload files from this Drive folder. Try syncing it again.";
+      }
+    }
+    return {
+      id: row.id,
+      connectionId: row.connectionId,
+      name: row.name,
+      path: row.path,
+      provider: "google-drive",
+      status: row.status,
+      lastSyncedAt: row.lastSyncedAt?.toISOString() ?? null,
+      connectionStatus: row.connectionStatus,
+      files,
+      ...(filesError ? { filesError } : {}),
+    };
   }));
 }
 
@@ -433,6 +528,13 @@ export async function syncGoogleDriveDocumentSource(sourceIdValue: string): Prom
   if (!sourceRow) throw new GoogleDriveDiscoveryError("This source or its Google Drive connection is no longer active.", 404);
 
   const files = await listGoogleDriveSourceFiles(sourceRow.connectionId, sourceRow.folderId);
+  if (files.length === 0) {
+    console.warn("[invoices:google-drive] Source has no direct files", {
+      sourceId: sourceRow.id,
+      folderId: sourceRow.folderId,
+      connectionId: sourceRow.connectionId,
+    });
+  }
   const database = getDatabase();
   const existingRows = await database
     .select({ externalItemId: documentSourceItems.externalItemId, externalVersion: documentSourceItems.externalVersion })
@@ -469,8 +571,8 @@ export async function syncGoogleDriveDocumentSource(sourceIdValue: string): Prom
         .onConflictDoUpdate({
           target: [documentSourceItems.documentSourceId, documentSourceItems.externalItemId],
           set: {
+            status: sql`case when ${documentSourceItems.externalVersion} is distinct from excluded.external_version then 'discovered' else ${documentSourceItems.status} end`,
             externalVersion: sql`excluded.external_version`,
-            status: "discovered",
             lastSeenAt: syncedAt,
             updatedAt: syncedAt,
           },
@@ -481,6 +583,51 @@ export async function syncGoogleDriveDocumentSource(sourceIdValue: string): Prom
       .set({ lastSyncedAt: syncedAt, updatedAt: syncedAt })
       .where(and(eq(documentSources.id, sourceRow.id), eq(documentSources.organizationId, account.workspace.id)));
   });
+
+  const indexedItems = await database
+    .select({ id: documentSourceItems.id, externalItemId: documentSourceItems.externalItemId, externalVersion: documentSourceItems.externalVersion })
+    .from(documentSourceItems)
+    .where(and(
+      eq(documentSourceItems.organizationId, account.workspace.id),
+      eq(documentSourceItems.documentSourceId, sourceRow.id),
+    ));
+  const itemIdByFileId = new Map(indexedItems.map((item) => [item.id, item.externalItemId]));
+  const versionByItemId = new Map(indexedItems.map((item) => [item.id, item.externalVersion]));
+  const itemIds = indexedItems.map((item) => item.id);
+  const latestExtractionByFileId = new Map<string, { runId: string; invoice: CanonicalInvoice }>();
+  if (itemIds.length > 0) {
+    const runs = await database
+      .select({ id: agentRuns.id, sourceId: agentRuns.sourceId, result: agentRuns.result })
+      .from(agentRuns)
+      .where(and(
+        eq(agentRuns.organizationId, account.workspace.id),
+        eq(agentRuns.productKey, "accounting"),
+        eq(agentRuns.agentKey, "invoice-extractor"),
+        eq(agentRuns.status, "completed"),
+        inArray(agentRuns.sourceId, itemIds),
+      ))
+      .orderBy(desc(agentRuns.createdAt));
+
+    for (const run of runs) {
+      if (!run.sourceId || !run.result || !run.result.invoice) continue;
+      const fileId = itemIdByFileId.get(run.sourceId);
+      if (!fileId || latestExtractionByFileId.has(fileId)) continue;
+      try {
+        const source = run.result.source;
+        const extractedVersion = source && typeof source === "object" && !Array.isArray(source)
+          ? source.modifiedTime
+          : undefined;
+        if (extractedVersion !== versionByItemId.get(run.sourceId)) continue;
+        latestExtractionByFileId.set(fileId, { runId: run.id, invoice: parseCanonicalInvoice(run.result.invoice) });
+      } catch {
+        console.warn("[invoices:history] Skipping an invalid stored invoice extraction", { runId: run.id });
+      }
+    }
+  }
+  const filesWithExtractions = files.map((file) => ({
+    ...file,
+    extraction: latestExtractionByFileId.get(file.id),
+  }));
 
   return {
     source: {
@@ -498,6 +645,78 @@ export async function syncGoogleDriveDocumentSource(sourceIdValue: string): Prom
     changedCount,
     unchangedCount,
     syncedAt: syncedAt.toISOString(),
+    files: filesWithExtractions,
+  };
+}
+
+export async function getGoogleDriveInvoicePdf(sourceIdValue: string, fileIdValue: string): Promise<GoogleDriveInvoicePdf> {
+  const account = await getSignedInWorkspace();
+  if (!account) throw new GoogleDriveDiscoveryError("Sign in and choose a workspace to extract invoices.", 401);
+
+  const sourceId = sourceIdValue.trim();
+  const fileId = fileIdValue.trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(sourceId) || !fileId || fileId.length > 512) {
+    throw new GoogleDriveDiscoveryError("Choose a valid invoice file.", 400);
+  }
+
+  const [sourceItem] = await getDatabase()
+    .select({
+      sourceItemId: documentSourceItems.id,
+      fileId: documentSourceItems.externalItemId,
+      modifiedTime: documentSourceItems.externalVersion,
+      sourceId: documentSources.id,
+      connectionId: providerConnections.externalConnectionId,
+    })
+    .from(documentSourceItems)
+    .innerJoin(documentSources, eq(documentSourceItems.documentSourceId, documentSources.id))
+    .innerJoin(providerConnections, eq(documentSources.providerConnectionId, providerConnections.id))
+    .where(and(
+      eq(documentSourceItems.organizationId, account.workspace.id),
+      eq(documentSourceItems.externalItemId, fileId),
+      eq(documentSourceItems.documentSourceId, sourceId),
+      eq(documentSources.organizationId, account.workspace.id),
+      eq(documentSources.provider, "google-drive"),
+      eq(documentSources.status, "active"),
+      eq(providerConnections.status, "active"),
+    ))
+    .limit(1);
+
+  if (!sourceItem) throw new GoogleDriveDiscoveryError("Sync this active Drive source before extracting its files.", 404);
+  const connection = await getActiveGoogleDriveConnection(sourceItem.connectionId);
+  const proxyHeaders = {
+    Authorization: `Bearer ${connection.config.secretKey}`,
+    "Connection-Id": connection.connectionId,
+    "Provider-Config-Key": connection.config.integrationKey,
+  };
+  const fileUrl = `${nangoApiBaseUrl}/proxy/drive/v3/files/${encodeURIComponent(fileId)}`;
+  const metadataQuery = new URLSearchParams({ fields: "id,name,mimeType,modifiedTime" });
+  const metadataResponse = await fetch(`${fileUrl}?${metadataQuery}`, { headers: proxyHeaders, cache: "no-store" });
+  if (!metadataResponse.ok) {
+    console.error("[invoices:google-drive] Could not read invoice metadata", { status: metadataResponse.status });
+    throw new GoogleDriveDiscoveryError("Could not read this file from Google Drive. Check the Drive connection and try again.", 502);
+  }
+  const metadata = await metadataResponse.json() as GoogleDriveFile;
+  if (metadata.mimeType !== "application/pdf") {
+    throw new GoogleDriveDiscoveryError("Only PDF invoices can be extracted right now.", 415);
+  }
+
+  const mediaResponse = await fetch(`${fileUrl}?alt=media`, { headers: proxyHeaders, cache: "no-store" });
+  if (!mediaResponse.ok) {
+    console.error("[invoices:google-drive] Could not download invoice for extraction", { status: mediaResponse.status });
+    throw new GoogleDriveDiscoveryError("Could not download this PDF from Google Drive. Check the Drive connection and try again.", 502);
+  }
+  const content = new Uint8Array(await mediaResponse.arrayBuffer());
+  if (content.byteLength === 0) throw new GoogleDriveDiscoveryError("This PDF is empty.", 422);
+  if (content.byteLength > 50 * 1024 * 1024) throw new GoogleDriveDiscoveryError("This PDF is over the 50 MB extraction limit.", 413);
+
+  return {
+    organizationId: account.workspace.id,
+    sourceId: sourceItem.sourceId,
+    sourceItemId: sourceItem.sourceItemId,
+    fileId: sourceItem.fileId,
+    modifiedTime: sourceItem.modifiedTime,
+    fileName: metadata.name ?? "invoice.pdf",
+    content,
   };
 }
 
@@ -556,7 +775,9 @@ export async function listGoogleDriveFolders(
     q: `'${escapedParent}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
     pageSize: "100",
     orderBy: "name",
-    corpora: "user",
+    corpora: "allDrives",
+    includeItemsFromAllDrives: "true",
+    supportsAllDrives: "true",
     fields: "files(id,name,mimeType)",
   });
   const result = await requestDriveFiles(
@@ -570,15 +791,17 @@ export async function listGoogleDriveFolders(
   );
 }
 
-async function listGoogleDriveSourceFiles(connectionId: string, folderId: string) {
+async function listGoogleDriveSourceFiles(connectionId: string, folderId: string): Promise<GoogleDriveSourceFile[]> {
   const connection = await getActiveGoogleDriveConnection(connectionId);
   const q = getDriveQuery(folderId);
   const driveQuery = new URLSearchParams({
     q,
     pageSize: "100",
     orderBy: "modifiedTime desc",
-    corpora: "user",
-    fields: "files(id,modifiedTime)",
+    corpora: "allDrives",
+    includeItemsFromAllDrives: "true",
+    supportsAllDrives: "true",
+    fields: "files(id,name,mimeType,modifiedTime)",
   });
   const result = await requestDriveFiles(
     connection.connectionId,
@@ -586,5 +809,10 @@ async function listGoogleDriveSourceFiles(connectionId: string, folderId: string
     connection.config.secretKey,
     driveQuery,
   );
-  return (result.files ?? []).flatMap((file) => file.id ? [{ id: file.id, modifiedTime: file.modifiedTime ?? null }] : []);
+  return (result.files ?? []).flatMap((file): GoogleDriveSourceFile[] => file.id ? [{
+    id: file.id,
+    name: file.name ?? "Untitled document",
+    mimeType: file.mimeType ?? "application/octet-stream",
+    modifiedTime: file.modifiedTime ?? null,
+  }] : []);
 }
