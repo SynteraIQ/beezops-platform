@@ -5,6 +5,7 @@ import { authOptions, googleOAuthConfigured } from "../../auth";
 import { getWorkspaceForUser } from "../../tenant-service";
 import { SignOutButton } from "../sign-in-button";
 import { GoogleDriveConnect } from "./google-drive-connect";
+import { GoogleDriveInvoiceDiscovery } from "./google-drive-invoice-discovery";
 
 export const workspaceSections = [
   "overview",
@@ -40,7 +41,7 @@ const pageDetails: Record<WorkspaceSection, { eyebrow: string; title: string; de
   invoices: {
     eyebrow: "ACCOUNTS PAYABLE",
     title: "Invoices",
-    description: "Review incoming invoices, extracted details, and the evidence behind each recommendation.",
+    description: "Choose a Drive folder to discover invoice files before deciding what to import.",
   },
   approvals: {
     eyebrow: "HUMAN REVIEW",
@@ -171,7 +172,7 @@ function WorkspaceSectionContent({ section, userEmail }: { section: WorkspaceSec
   }
 
   if (section === "invoices") {
-    return <EmptySection icon="▤" title="No invoices imported yet" detail="Invoice file selection and import from Google Drive are not available yet. Once intake is added, this page will show extracted fields, context, recommendations, and evidence." action={{ href: "/connections", label: "Manage connections" }} />;
+    return <GoogleDriveInvoiceDiscovery />;
   }
   if (section === "approvals") {
     return <EmptySection icon="✓" title="No decisions waiting for approval" detail="When an invoice needs a person’s judgment, it will appear here with the supporting evidence and any unresolved questions." action={{ href: "/invoices", label: "View invoices" }} />;
