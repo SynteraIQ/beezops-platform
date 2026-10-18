@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { isInvoiceExtractionStuck } from "../../invoice-extraction-status";
 import { AutomationRuns } from "./automation-runs";
 
 interface GoogleDriveConnection {
@@ -67,8 +68,9 @@ function readField(field: unknown): FieldDetail {
   };
 }
 
-function statusLabel(status: string): string {
+function statusLabel(status: string, updatedAt: string): string {
   if (status === "ready_for_matching") return "Extraction complete";
+  if (isInvoiceExtractionStuck(status, updatedAt)) return "Not responding · retry available";
   return status.replaceAll("_", " ");
 }
 
@@ -273,7 +275,7 @@ export function InvoiceIntakeWorkspace() {
     }
   }
 
-  async function startExtraction(file: DriveFile, targetConnectionId = connectionId) {
+  async function startExtraction(file: DriveFile, targetConnectionId = connectionId, retryStuck = false) {
     if (!targetConnectionId) return;
     setBusyFileId(file.id);
     setError("");
@@ -286,6 +288,7 @@ export function InvoiceIntakeWorkspace() {
           connectionId: targetConnectionId,
           fileId: file.id,
           requestId: crypto.randomUUID(),
+          retryStuck,
         }),
       });
       const payload = (await response.json()) as { error?: string; status?: string };
@@ -395,7 +398,8 @@ export function InvoiceIntakeWorkspace() {
               {files.map((file) => {
                 const existingInvoice = invoices.find((invoice) => invoice.sourceFileId === file.id);
                 const supportsManualExtraction = file.mimeType === "application/pdf";
-                const busy = busyFileId === file.id || existingInvoice?.status === "queued" || existingInvoice?.status === "processing";
+                const stuck = existingInvoice ? isInvoiceExtractionStuck(existingInvoice.status, existingInvoice.updatedAt) : false;
+                const busy = busyFileId === file.id || ((existingInvoice?.status === "queued" || existingInvoice?.status === "processing") && !stuck);
                 return (
                   <article className={`invoice-result-card ${existingInvoice?.id === selectedInvoiceId ? "invoice-result-selected" : ""}`} id={existingInvoice ? `invoice-${existingInvoice.id}` : undefined} key={file.id}>
                     <div className="invoice-file-row">
@@ -403,15 +407,15 @@ export function InvoiceIntakeWorkspace() {
                         <strong>{file.name}</strong>
                         <span>{file.mimeType === "application/pdf" ? "PDF" : file.mimeType}{file.modifiedTime ? " · Modified " + new Date(file.modifiedTime).toLocaleDateString() : ""}{file.size ? " · " + (Number(file.size) / 1024).toFixed(0) + " KB" : ""}</span>
                       </div>
-                      {existingInvoice ? <span className={"invoice-status invoice-status-" + existingInvoice.status}>{statusLabel(existingInvoice.status)}</span> : null}
+                      {existingInvoice ? <span className={"invoice-status invoice-status-" + existingInvoice.status}>{statusLabel(existingInvoice.status, existingInvoice.updatedAt)}</span> : null}
                       <button
                         className="secondary-button invoice-extract-button"
                         type="button"
                         disabled={busy || !supportsManualExtraction}
                         title={supportsManualExtraction ? undefined : "Manual extraction currently supports PDF invoices."}
-                        onClick={() => void startExtraction(file)}
+                        onClick={() => void startExtraction(file, connectionId, stuck)}
                       >
-                        {busy ? "Processing…" : !supportsManualExtraction ? "PDF required" : existingInvoice?.status === "failed" ? "Retry extraction" : existingInvoice ? "Extract again" : "Manual Extract"}
+                        {busy ? "Processing…" : !supportsManualExtraction ? "PDF required" : existingInvoice ? "Extract again" : "Manual Extract"}
                       </button>
                     </div>
                     {existingInvoice ? <InvoiceDetails invoice={existingInvoice} expanded={existingInvoice.id === selectedInvoiceId} /> : null}
@@ -422,12 +426,12 @@ export function InvoiceIntakeWorkspace() {
                 <article className={`invoice-result-card ${invoice.id === selectedInvoiceId ? "invoice-result-selected" : ""}`} id={`invoice-${invoice.id}`} key={invoice.id}>
                   <div className="invoice-file-row">
                     <div className="invoice-file-copy"><strong>{invoice.sourceFileName}</strong><span>Previously processed · file is not in the current folder view</span></div>
-                    <span className={"invoice-status invoice-status-" + invoice.status}>{statusLabel(invoice.status)}</span>
-                    {invoice.status === "failed" ? (
+                    <span className={"invoice-status invoice-status-" + invoice.status}>{statusLabel(invoice.status, invoice.updatedAt)}</span>
+                    {invoice.status === "failed" || invoice.status === "ready_for_matching" || invoice.status === "needs_review" || isInvoiceExtractionStuck(invoice.status, invoice.updatedAt) ? (
                       <button
                         className="secondary-button invoice-extract-button"
                         type="button"
-                        disabled={busyFileId === invoice.sourceFileId}
+                        disabled={busyFileId === invoice.sourceFileId || ((invoice.status === "queued" || invoice.status === "processing") && !isInvoiceExtractionStuck(invoice.status, invoice.updatedAt))}
                         onClick={() => void startExtraction({
                           id: invoice.sourceFileId,
                           name: invoice.sourceFileName,
@@ -436,9 +440,9 @@ export function InvoiceIntakeWorkspace() {
                           version: "",
                           size: null,
                           webViewLink: null,
-                        }, invoice.connectionId)}
+                        }, invoice.connectionId, isInvoiceExtractionStuck(invoice.status, invoice.updatedAt))}
                       >
-                        {busyFileId === invoice.sourceFileId ? "Processing…" : "Retry extraction"}
+                        {busyFileId === invoice.sourceFileId ? "Processing…" : "Extract again"}
                       </button>
                     ) : null}
                   </div>
@@ -472,6 +476,9 @@ function InvoiceDetails({ invoice, expanded = false }: { invoice: InvoiceRecord;
     const message = (issue as Record<string, unknown>).message;
     return typeof message === "string" ? message : "";
   }).filter(Boolean);
+  const taxRows = Array.isArray(invoice.extractedData?.taxBreakdown)
+    ? invoice.extractedData.taxBreakdown.filter((row): row is Record<string, unknown> => typeof row === "object" && row !== null && !Array.isArray(row))
+    : [];
   return (
     <>
       {reviewFields.length > 0 ? (
@@ -489,6 +496,30 @@ function InvoiceDetails({ invoice, expanded = false }: { invoice: InvoiceRecord;
           <Field label="Tax" detail={readField(invoice.extractedData?.taxAmount)} />
           <Field label="Total" detail={readField(invoice.extractedData?.totalAmount)} />
         </div>
+        {taxRows.length > 0 ? (
+          <div className="invoice-tax-breakdown">
+            <strong>Tax breakdown</strong>
+            {taxRows.map((row, rowIndex) => {
+              const taxes = Array.isArray(row.taxes)
+                ? row.taxes.filter((tax): tax is Record<string, unknown> => typeof tax === "object" && tax !== null && !Array.isArray(tax))
+                : [];
+              return (
+                <div className="invoice-tax-row" key={rowIndex}>
+                  <Field label="HSN/SAC" detail={readField(row.hsnSac)} />
+                  <Field label="Taxable value" detail={readField(row.taxableAmount)} />
+                  {taxes.map((tax, taxIndex) => (
+                    <div className="invoice-tax-component" key={taxIndex}>
+                      <Field label="Printed tax label" detail={readField(tax.printedLabel)} />
+                      <Field label="Tax type" detail={readField(tax.taxType)} />
+                      <Field label="Rate" detail={readField(tax.ratePercent)} />
+                      <Field label="Tax amount" detail={readField(tax.amount)} />
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
         {invoice.extractedData && Array.isArray(invoice.extractedData.lineItems) && invoice.extractedData.lineItems.length > 0 ? (
           <div className="invoice-line-items">
             <strong>Extracted line items</strong>

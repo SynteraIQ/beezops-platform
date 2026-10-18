@@ -1,7 +1,16 @@
 import type { JsonObject, JsonValue } from "@beezops/database";
+import type { ToolDefinition } from "@beezops/tools";
 
-export const invoiceExtractionPromptVersion = "invoice-extraction.v2";
-export const invoiceExtractionSchemaVersion = "canonical-invoice.v2";
+export const invoiceExtractionPromptVersion = "invoice-extraction.v4";
+export const invoiceExtractionSchemaVersion = "canonical-invoice.v3";
+
+const invoiceExtractionInstructions = `Extract the invoice into the supplied schema. Do not infer missing values. For each field, set availability to provided when the invoice contains a readable value, not_present only when the invoice clearly does not state the field, and unreadable when the field appears but its value cannot be read. Use a non-empty value only when availability is provided; otherwise value must be null.
+
+Amounts and rates must be decimal strings without currency symbols; a printed rate of 9% is represented as 9. Dates must use YYYY-MM-DD. Currency must use an ISO 4217 three-letter code. For provided fields, include a short exact supporting text excerpt and page number when available. Confidence is a number from 0 to 1 or null. Preserve line items when readable.
+
+Extract detailed tax table rows into taxBreakdown, including HSN/SAC, taxable amount, each printed tax label exactly as shown, its normalized tax type when clear, rate, and amount. For GST invoices, preserve labels such as "CGST OUTPUT 9%" and "SGST OUTPUT 9%" exactly in printedLabel; when the tax type is clear, normalize taxType to "CGST" or "SGST". Also capture IGST, UTGST, cess, or other printed tax components when present. Keep the printed label separate from normalized tax type. Do not assume the invoice is governed by GST or infer tax types, rates, or amounts when the document does not make them clear.
+
+Do not include bold subtotal or total rows as additional taxBreakdown entries; use the invoice-level subtotal, taxAmount, and totalAmount fields for those totals. The invoice-level taxAmount remains the printed invoice tax total, not a model-calculated total.`;
 
 type FieldAvailability = "provided" | "not_present" | "unreadable";
 
@@ -22,6 +31,16 @@ export interface ExtractedInvoice {
   subtotal: ExtractedInvoiceField;
   taxAmount: ExtractedInvoiceField;
   totalAmount: ExtractedInvoiceField;
+  taxBreakdown: Array<{
+    hsnSac: ExtractedInvoiceField;
+    taxableAmount: ExtractedInvoiceField;
+    taxes: Array<{
+      printedLabel: ExtractedInvoiceField;
+      taxType: ExtractedInvoiceField;
+      ratePercent: ExtractedInvoiceField;
+      amount: ExtractedInvoiceField;
+    }>;
+  }>;
   lineItems: Array<{
     description: ExtractedInvoiceField;
     quantity: ExtractedInvoiceField;
@@ -34,6 +53,16 @@ export interface InvoiceValidationIssue {
   code: string;
   field: string;
   message: string;
+}
+
+export interface InvoiceExtractionInput {
+  base64: string;
+}
+
+export interface InvoiceExtractionOutput {
+  invoice: ExtractedInvoice;
+  issues: InvoiceValidationIssue[];
+  modelKey: string;
 }
 
 export class ExtractionProviderError extends Error {
@@ -67,6 +96,32 @@ const invoiceSchema = {
     subtotal: fieldSchema,
     taxAmount: fieldSchema,
     totalAmount: fieldSchema,
+    taxBreakdown: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          hsnSac: fieldSchema,
+          taxableAmount: fieldSchema,
+          taxes: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                printedLabel: fieldSchema,
+                taxType: fieldSchema,
+                ratePercent: fieldSchema,
+                amount: fieldSchema,
+              },
+              required: ["printedLabel", "taxType", "ratePercent", "amount"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["hsnSac", "taxableAmount", "taxes"],
+        additionalProperties: false,
+      },
+    },
     lineItems: {
       type: "array",
       items: {
@@ -91,6 +146,7 @@ const invoiceSchema = {
     "subtotal",
     "taxAmount",
     "totalAmount",
+    "taxBreakdown",
     "lineItems",
   ],
   additionalProperties: false,
@@ -125,6 +181,21 @@ function isLineItem(value: unknown): value is ExtractedInvoice["lineItems"][numb
     && isInvoiceField(value.amount);
 }
 
+function isTaxComponent(value: unknown): value is ExtractedInvoice["taxBreakdown"][number]["taxes"][number] {
+  if (!isRecord(value)) return false;
+  return isInvoiceField(value.printedLabel)
+    && isInvoiceField(value.taxType)
+    && isInvoiceField(value.ratePercent)
+    && isInvoiceField(value.amount);
+}
+
+function isTaxBreakdownRow(value: unknown): value is ExtractedInvoice["taxBreakdown"][number] {
+  if (!isRecord(value) || !Array.isArray(value.taxes)) return false;
+  return isInvoiceField(value.hsnSac)
+    && isInvoiceField(value.taxableAmount)
+    && value.taxes.every(isTaxComponent);
+}
+
 function parseInvoice(value: unknown): ExtractedInvoice {
   if (!isRecord(value)
     || !isInvoiceField(value.supplierName)
@@ -135,6 +206,8 @@ function parseInvoice(value: unknown): ExtractedInvoice {
     || !isInvoiceField(value.subtotal)
     || !isInvoiceField(value.taxAmount)
     || !isInvoiceField(value.totalAmount)
+    || !Array.isArray(value.taxBreakdown)
+    || !value.taxBreakdown.every(isTaxBreakdownRow)
     || !Array.isArray(value.lineItems)
     || !value.lineItems.every(isLineItem)) {
     throw new Error("The extraction response did not match the canonical invoice schema.");
@@ -177,6 +250,64 @@ function buildValidationIssues(invoice: ExtractedInvoice): InvoiceValidationIssu
       issues.push({ code: "invalid_amount_format", field: fieldName, message: "Amount must be a decimal number without a currency symbol." });
     }
   }
+  let extractedTaxTotal = 0;
+  let hasCompleteTaxBreakdown = invoice.taxBreakdown.length > 0;
+  invoice.taxBreakdown.forEach((row, rowIndex) => {
+    const taxableAmount = row.taxableAmount.value;
+    const taxableValue = taxableAmount && /^-?\d+(\.\d{1,4})?$/.test(taxableAmount) ? Number(taxableAmount) : null;
+    if (row.taxes.length === 0) hasCompleteTaxBreakdown = false;
+    if (row.taxableAmount.availability === "provided" && taxableValue === null) {
+      issues.push({
+        code: "invalid_amount_format",
+        field: `tax_breakdown.${rowIndex}.taxable_amount`,
+        message: "Taxable value must be a decimal number without a currency symbol.",
+      });
+    }
+    row.taxes.forEach((tax, taxIndex) => {
+      const amount = tax.amount.value;
+      const taxAmount = amount && /^-?\d+(\.\d{1,4})?$/.test(amount) ? Number(amount) : null;
+      const rate = tax.ratePercent.value;
+      const rateValue = rate && /^-?\d+(\.\d{1,4})?$/.test(rate) ? Number(rate) : null;
+      if (taxAmount !== null) {
+        extractedTaxTotal += taxAmount;
+      } else {
+        hasCompleteTaxBreakdown = false;
+        if (tax.amount.availability === "provided") {
+          issues.push({
+            code: "invalid_amount_format",
+            field: `tax_breakdown.${rowIndex}.taxes.${taxIndex}.amount`,
+            message: "Tax amount must be a decimal number without a currency symbol.",
+          });
+        }
+      }
+      if (tax.ratePercent.availability === "provided" && rateValue === null) {
+        issues.push({
+          code: "invalid_rate_format",
+          field: `tax_breakdown.${rowIndex}.taxes.${taxIndex}.rate_percent`,
+          message: "Tax rate must be a decimal percentage without a percent sign.",
+        });
+      }
+      if (taxableValue !== null && taxAmount !== null && rateValue !== null) {
+        const expectedAmount = taxableValue * rateValue / 100;
+        if (Math.abs(expectedAmount - taxAmount) > 0.02) {
+          issues.push({
+            code: "tax_component_calculation_mismatch",
+            field: `tax_breakdown.${rowIndex}.taxes.${taxIndex}.amount`,
+            message: "The extracted tax amount does not match the taxable value and rate; verify it against the invoice.",
+          });
+        }
+      }
+    });
+  });
+  const invoiceTaxAmount = invoice.taxAmount.value;
+  if (hasCompleteTaxBreakdown && invoiceTaxAmount && /^-?\d+(\.\d{1,4})?$/.test(invoiceTaxAmount)
+    && Math.abs(extractedTaxTotal - Number(invoiceTaxAmount)) > 0.02) {
+    issues.push({
+      code: "tax_breakdown_total_mismatch",
+      field: "tax_amount",
+      message: "The extracted tax components do not add up to the invoice tax total; verify the breakdown.",
+    });
+  }
   const currency = invoice.currency.value;
   if (currency && !/^[A-Z]{3}$/.test(currency)) {
     issues.push({ code: "invalid_currency_format", field: "currency", message: "Currency must use a three-letter code." });
@@ -212,10 +343,7 @@ export function validationIssuesToJson(issues: InvoiceValidationIssue[]): JsonVa
   }));
 }
 
-export async function extractInvoicePdf(input: {
-  base64: string;
-  fileName: string;
-}): Promise<{ invoice: ExtractedInvoice; issues: InvoiceValidationIssue[]; modelKey: string }> {
+export async function extractInvoicePdf(input: InvoiceExtractionInput): Promise<InvoiceExtractionOutput> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new ExtractionProviderError("OPENAI_API_KEY is not configured.", 401);
   const modelKey = process.env.OPENAI_MODEL?.trim();
@@ -233,7 +361,7 @@ export async function extractInvoicePdf(input: {
         content: [
           {
             type: "input_text",
-            text: "Extract the invoice into the supplied schema. Do not infer missing values. For each field, set availability to provided when the invoice contains a readable value, not_present only when the invoice clearly does not state the field, and unreadable when the field appears but its value cannot be read. Use a non-empty value only when availability is provided; otherwise value must be null. Amounts must be decimal strings without currency symbols. Dates must use YYYY-MM-DD. Currency must use an ISO 4217 three-letter code. For provided fields, include a short exact supporting text excerpt and page number when available. Confidence is a number from 0 to 1 or null. Preserve line items when readable.",
+            text: invoiceExtractionInstructions,
           },
           {
             type: "input_file",
@@ -267,3 +395,10 @@ export async function extractInvoicePdf(input: {
   const invoice = parseInvoice(JSON.parse(output) as unknown);
   return { invoice, issues: buildValidationIssues(invoice), modelKey };
 }
+
+export const invoiceExtractionTool: ToolDefinition<InvoiceExtractionInput, InvoiceExtractionOutput> = {
+  id: "accounting.invoice.extract",
+  version: invoiceExtractionPromptVersion,
+  description: "Extract invoice fields, line items, and printed tax breakdowns into the accounting canonical invoice format.",
+  execute: extractInvoicePdf,
+};
