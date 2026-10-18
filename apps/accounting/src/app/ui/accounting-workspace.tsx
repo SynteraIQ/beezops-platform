@@ -41,7 +41,7 @@ const pageDetails: Record<WorkspaceSection, { eyebrow: string; title: string; de
   invoices: {
     eyebrow: "ACCOUNTS PAYABLE",
     title: "Invoices",
-    description: "Choose a Drive folder to discover invoice files before deciding what to import.",
+    description: "Use Invoices to review discovered PDFs and Sources to manage the folders RedZone scans.",
   },
   approvals: {
     eyebrow: "HUMAN REVIEW",
