@@ -161,12 +161,11 @@ function WorkspaceSectionContent({ section, userEmail }: { section: WorkspaceSec
   if (section === "connections") {
     return (
       <div className="workspace-content">
-        <section className="section-heading"><div><span className="section-kicker">DOCUMENT SOURCES</span><h2>Provider connections</h2></div><span className="section-note">Account access is separate from sign-in</span></section>
+        <section className="section-heading"><div><span className="section-kicker">DOCUMENT SOURCES</span><h2>Provider connections</h2></div></section>
         <article className="provider-card">
           <div className="provider-logo google-drive-logo" aria-hidden="true"><svg viewBox="0 0 48 48"><path fill="#00832d" d="M16.4 4h12.1L43 29.1H30.9z"/><path fill="#0066da" d="M9.9 15.1 3.7 25.9 16.1 47h12.3L16.1 25.9z"/><path fill="#ffba00" d="M16.1 47h12.3l14.6-25.1H30.7z"/></svg></div>
-          <div className="provider-copy"><div className="provider-title"><h2>Google Drive</h2><GoogleDriveConnect /></div><p>Authorize Drive separately from sign-in. File selection and invoice import will use this connection.</p><span className="provider-scopes">Provider: Google Drive <span>·</span> Scope is configured in Nango</span></div>
+          <div className="provider-copy"><div className="provider-title"><h2>Google Drive</h2></div><p>Authorize Drive separately from sign-in. File selection and invoice import will use this connection.</p><span className="provider-scopes">Provider: Google Drive <span>·</span> Scope is configured in Nango</span><GoogleDriveConnect /></div>
         </article>
-        <div className="connection-note"><span className="note-icon">i</span><p><strong>Separate authorization</strong> — signing in with Google identifies your BeezOps user. Connecting Drive will be a separate consent flow with its own requested access.</p></div>
       </div>
     );
   }

@@ -1,10 +1,12 @@
 import { getServerSession } from "next-auth";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { getDatabase, providerConnections } from "@beezops/database";
 import { authOptions } from "./auth";
 import { getWorkspaceForUser } from "./tenant-service";
 
 const nangoApiBaseUrl = "https://api.nango.dev";
+
+type ConnectionRecordStatus = "active" | "disconnected" | "reauthorization_required";
 
 interface NangoConnectSessionResponse {
   data?: {
@@ -23,8 +25,16 @@ interface NangoConnectionsResponse {
   connections?: NangoConnection[];
 }
 
+export interface GoogleDriveConnectionSummary {
+  connectionId: string;
+  status: ConnectionRecordStatus;
+  createdAt: string;
+  lastSyncedAt: string | null;
+}
+
 export interface GoogleDriveConnectionStatus {
   state: "connected" | "not-connected" | "not-configured" | "reauthorization-required";
+  connections: GoogleDriveConnectionSummary[];
 }
 
 async function getSignedInWorkspace() {
@@ -44,10 +54,46 @@ function getNangoConfiguration() {
   return { secretKey, integrationKey };
 }
 
+function isAuthorizationError(connection: NangoConnection) {
+  return connection.errors?.some((error) => error.type === "auth") ?? false;
+}
+
+async function readGoogleDriveConnectionStatus(organizationId: string, integrationKey: string): Promise<GoogleDriveConnectionStatus> {
+  const records = await getDatabase()
+    .select({
+      connectionId: providerConnections.externalConnectionId,
+      status: providerConnections.status,
+      createdAt: providerConnections.createdAt,
+      lastSyncedAt: providerConnections.lastSyncedAt,
+    })
+    .from(providerConnections)
+    .where(and(
+      eq(providerConnections.organizationId, organizationId),
+      eq(providerConnections.provider, "google-drive"),
+      eq(providerConnections.integrationKey, integrationKey),
+    ))
+    .orderBy(desc(providerConnections.createdAt));
+
+  const connections: GoogleDriveConnectionSummary[] = records.map((record) => ({
+    connectionId: record.connectionId,
+    status: record.status as ConnectionRecordStatus,
+    createdAt: record.createdAt.toISOString(),
+    lastSyncedAt: record.lastSyncedAt?.toISOString() ?? null,
+  }));
+
+  const state = connections.some((connection) => connection.status === "active")
+    ? "connected"
+    : connections.some((connection) => connection.status === "reauthorization_required")
+      ? "reauthorization-required"
+      : "not-connected";
+
+  return { state, connections };
+}
+
 export async function createGoogleDriveConnectSession(): Promise<string | null> {
-  const workspace = await getSignedInWorkspace();
+  const account = await getSignedInWorkspace();
   const config = getNangoConfiguration();
-  if (!workspace || !config) return null;
+  if (!account || !config) return null;
 
   const response = await fetch(`${nangoApiBaseUrl}/connect/sessions`, {
     method: "POST",
@@ -57,8 +103,8 @@ export async function createGoogleDriveConnectSession(): Promise<string | null> 
     },
     body: JSON.stringify({
       tags: {
-        end_user_id: workspace.workspace.id,
-        organization_id: workspace.workspace.id,
+        end_user_id: account.workspace.id,
+        organization_id: account.workspace.id,
       },
       allowed_integrations: [config.integrationKey],
     }),
@@ -83,28 +129,15 @@ export async function createGoogleDriveConnectSession(): Promise<string | null> 
 export async function getGoogleDriveConnectionStatus(): Promise<GoogleDriveConnectionStatus> {
   const account = await getSignedInWorkspace();
   const config = getNangoConfiguration();
-  if (!account || !config) return { state: "not-configured" };
+  if (!account || !config) return { state: "not-configured", connections: [] };
 
-  const connections = await getDatabase()
-    .select({ status: providerConnections.status })
-    .from(providerConnections)
-    .where(and(
-      eq(providerConnections.organizationId, account.workspace.id),
-      eq(providerConnections.provider, "google-drive"),
-      eq(providerConnections.integrationKey, config.integrationKey),
-    ));
-
-  if (connections.some((connection) => connection.status === "active")) return { state: "connected" };
-  if (connections.some((connection) => connection.status === "reauthorization_required")) {
-    return { state: "reauthorization-required" };
-  }
-  return { state: "not-connected" };
+  return readGoogleDriveConnectionStatus(account.workspace.id, config.integrationKey);
 }
 
 export async function syncGoogleDriveConnections(): Promise<GoogleDriveConnectionStatus> {
   const account = await getSignedInWorkspace();
   const config = getNangoConfiguration();
-  if (!account || !config) return { state: "not-configured" };
+  if (!account || !config) return { state: "not-configured", connections: [] };
 
   const query = new URLSearchParams({
     "tags[end_user_id]": account.workspace.id,
@@ -145,7 +178,7 @@ export async function syncGoogleDriveConnections(): Promise<GoogleDriveConnectio
       ));
 
     for (const connection of scopedConnections) {
-      const requiresReauthorization = connection.errors?.some((error) => error.type === "auth") ?? false;
+      const status = isAuthorizationError(connection) ? "reauthorization_required" : "active";
       await transaction
         .insert(providerConnections)
         .values({
@@ -153,7 +186,7 @@ export async function syncGoogleDriveConnections(): Promise<GoogleDriveConnectio
           provider: "google-drive",
           integrationKey: config.integrationKey,
           externalConnectionId: connection.connection_id,
-          status: requiresReauthorization ? "reauthorization_required" : "active",
+          status,
           connectedByUserId: account.userId,
           createdAt: now,
           updatedAt: now,
@@ -167,7 +200,7 @@ export async function syncGoogleDriveConnections(): Promise<GoogleDriveConnectio
             providerConnections.externalConnectionId,
           ],
           set: {
-            status: requiresReauthorization ? "reauthorization_required" : "active",
+            status,
             updatedAt: now,
             lastSyncedAt: now,
           },
@@ -175,9 +208,52 @@ export async function syncGoogleDriveConnections(): Promise<GoogleDriveConnectio
     }
   });
 
-  return {
-    state: scopedConnections.some((connection) => !connection.errors?.some((error) => error.type === "auth"))
-      ? "connected"
-      : "not-connected",
-  };
+  return readGoogleDriveConnectionStatus(account.workspace.id, config.integrationKey);
+}
+
+export async function disconnectGoogleDriveConnection(connectionId: string): Promise<void> {
+  const account = await getSignedInWorkspace();
+  const config = getNangoConfiguration();
+  if (!account || !config) throw new Error("Google Drive is not configured for this workspace.");
+
+  const [connection] = await getDatabase()
+    .select({ id: providerConnections.id, externalConnectionId: providerConnections.externalConnectionId })
+    .from(providerConnections)
+    .where(and(
+      eq(providerConnections.organizationId, account.workspace.id),
+      eq(providerConnections.provider, "google-drive"),
+      eq(providerConnections.integrationKey, config.integrationKey),
+      eq(providerConnections.externalConnectionId, connectionId),
+    ))
+    .limit(1);
+
+  if (!connection) throw new Error("Google Drive connection was not found in this workspace.");
+
+  const query = new URLSearchParams({ provider_config_key: config.integrationKey });
+  const response = await fetch(
+    `${nangoApiBaseUrl}/connections/${encodeURIComponent(connection.externalConnectionId)}?${query}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${config.secretKey}` },
+      cache: "no-store",
+    },
+  );
+
+  if (!response.ok && response.status !== 404) {
+    const responseText = await response.text();
+    console.error("[connections:google-drive] Could not disconnect Nango connection", {
+      status: response.status,
+      response: responseText.slice(0, 500),
+    });
+    throw new Error("Could not disconnect Google Drive. The connection is still active.");
+  }
+
+  const now = new Date();
+  await getDatabase()
+    .update(providerConnections)
+    .set({ status: "disconnected", updatedAt: now, lastSyncedAt: now })
+    .where(and(
+      eq(providerConnections.id, connection.id),
+      eq(providerConnections.organizationId, account.workspace.id),
+    ));
 }
