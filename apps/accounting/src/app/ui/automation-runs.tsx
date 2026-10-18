@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 
 interface AgentRun {
   id: string;
-  invoiceId: string;
+  runType: "invoice_extraction" | "gl_coding" | "reconciliation" | "bank_statement_extraction" | "bank_statement_import";
+  invoiceId: string | null;
   workflowRunId: string | null;
   sourceFileName: string;
   triggerSource: string;
@@ -21,6 +22,7 @@ interface AgentRun {
 function statusLabel(status: string): string {
   if (status === "ready_for_matching") return "Extraction complete";
   if (status === "needs_review") return "Needs review";
+  if (status === "completed") return "Completed";
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
@@ -69,8 +71,8 @@ export function AutomationRuns({ onViewInvoice, onViewInvoices }: {
       <div className="agent-runs-header">
         <div>
           <span className="section-kicker">PROCESSING HISTORY</span>
-          <h2 id="processing-runs-heading">Invoice processing runs</h2>
-          <p>Each row is one invoice extraction attempt, including retries.</p>
+          <h2 id="processing-runs-heading">Agent and workflow runs</h2>
+      <p>Invoice and bank statement extraction, GL coding, and payment match recommendations.</p>
         </div>
         <button className="agent-runs-refresh" type="button" onClick={() => void loadRuns()} disabled={loading}>
           {loading ? "Refreshing…" : "Refresh"}
@@ -82,7 +84,7 @@ export function AutomationRuns({ onViewInvoice, onViewInvoices }: {
       {!loading && runs.length === 0 && !error ? (
         <div className="agent-runs-empty">
           <strong>No processing runs yet</strong>
-          <span>Use Manual Extract on a PDF invoice to create the first run.</span>
+          <span>Extract an invoice or import a bank statement to create the first run.</span>
           <button className="agent-run-view-invoice" type="button" onClick={onViewInvoices}>Open invoices <span aria-hidden="true">↗</span></button>
         </div>
       ) : null}
@@ -100,17 +102,17 @@ export function AutomationRuns({ onViewInvoice, onViewInvoices }: {
                   </div>
                   <div className="agent-run-meta">
                     <span>{formatDate(run.createdAt)}</span>
-                    <span>{run.triggerSource.replaceAll("_", " ")}</span>
+                    <span>{run.runType === "gl_coding" ? "GL coding recommendation" : run.runType === "reconciliation" ? "Payment reconciliation" : run.runType === "bank_statement_extraction" ? "Bank statement PDF extraction" : run.runType === "bank_statement_import" ? "Bank statement CSV import" : run.triggerSource.replaceAll("_", " ")}</span>
                     {duration ? <span>{duration}</span> : null}
                     {run.modelKey ? <span>{run.modelKey}</span> : null}
                   </div>
-                  <div className="agent-run-versions">Prompt {run.promptVersion} · Schema {run.schemaVersion}</div>
+                  <div className="agent-run-versions">{run.runType === "reconciliation" ? "Model-assisted matching · human confirmation" : "Prompt " + run.promptVersion + (run.runType === "gl_coding" ? " · Reasoning run" : run.runType === "bank_statement_extraction" ? " · Structured extraction" : " · Schema " + run.schemaVersion)}</div>
                   {run.errorSummary ? <p className="agent-run-error-detail">{run.errorSummary}</p> : null}
                 </div>
                 <div className="agent-run-id">
-                  <span>Workflow run</span>
+                  <span>{run.runType === "invoice_extraction" ? "Workflow run" : "Agent run"}</span>
                   <code>{run.workflowRunId ?? "Starting…"}</code>
-                  <button className="agent-run-view-invoice" type="button" onClick={() => onViewInvoice(run.invoiceId)}>View invoice <span aria-hidden="true">↗</span></button>
+                  {run.invoiceId ? <button className="agent-run-view-invoice" type="button" onClick={() => onViewInvoice(run.invoiceId ?? "")}>View invoice <span aria-hidden="true">↗</span></button> : null}
                 </div>
               </article>
             );

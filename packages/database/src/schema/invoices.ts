@@ -14,6 +14,7 @@ import {
 import type { JsonObject, JsonValue } from "./agent-learning";
 import { organizations, users } from "./tenants";
 import { providerConnections } from "./connections";
+import { accountingClients } from "./clients";
 
 export type InvoiceTriggerSource = "manual" | "drive_discovery";
 export type InvoiceProcessingStatus =
@@ -26,6 +27,7 @@ export type InvoiceProcessingStatus =
 export const invoices = pgTable("invoices", {
   id: uuid("id").defaultRandom().primaryKey(),
   organizationId: uuid("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  accountingClientId: uuid("accounting_client_id"),
   providerConnectionId: uuid("provider_connection_id").notNull().references(() => providerConnections.id, { onDelete: "restrict" }),
   sourceProvider: varchar("source_provider", { length: 80 }).notNull().default("google-drive"),
   sourceFileId: varchar("source_file_id", { length: 255 }).notNull(),
@@ -48,6 +50,11 @@ export const invoices = pgTable("invoices", {
   organizationStatusIndex: index("invoices_organization_status_idx").on(table.organizationId, table.status),
   organizationCreatedIndex: index("invoices_organization_created_idx").on(table.organizationId, table.createdAt),
   organizationIdUnique: unique("invoices_organization_id_id_unique").on(table.organizationId, table.id),
+  accountingClientSameOrganizationForeignKey: foreignKey({
+    name: "invoices_accounting_client_same_organization_fk",
+    columns: [table.organizationId, table.accountingClientId],
+    foreignColumns: [accountingClients.organizationId, accountingClients.id],
+  }).onDelete("restrict"),
   validStatusCheck: check(
     "invoices_status_check",
     sql.raw("status in ('queued', 'processing', 'ready_for_matching', 'needs_review', 'failed')"),

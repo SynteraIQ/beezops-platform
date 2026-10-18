@@ -8,6 +8,14 @@ export {
 export type { JsonObject, JsonValue } from "./agent-learning";
 export { providerConnections } from "./connections";
 export type { ProviderAccountMetadata } from "./connections";
+export { accountingClients } from "./clients";
+export {
+  bankStatementImports,
+  bankTransactions,
+  clientGlAccounts,
+  invoiceLineCodingSuggestions,
+  invoicePaymentMatches,
+} from "./accounting-ledger";
 export { authIdentities, organizationMemberships, organizations, users } from "./tenants";
 export { invoiceExtractionAttempts, invoices } from "./invoices";
 export type { InvoiceProcessingStatus, InvoiceTriggerSource } from "./invoices";

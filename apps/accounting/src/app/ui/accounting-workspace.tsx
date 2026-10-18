@@ -6,11 +6,15 @@ import { getWorkspaceForUser } from "../../tenant-service";
 import { SignOutButton } from "../sign-in-button";
 import { GoogleDriveConnect } from "./google-drive-connect";
 import { InvoiceIntakeWorkspace } from "./invoice-intake-workspace";
+import { ClientDirectory } from "./client-directory";
+import { ReconciliationWorkspace } from "./reconciliation-workspace";
 import { invoiceIntakeExtractionWorkflow } from "../../automations/invoice-intake/definition";
 
 export const workspaceSections = [
   "overview",
+  "clients",
   "invoices",
+  "reconciliation",
   "approvals",
   "connections",
   "automations",
@@ -26,7 +30,9 @@ export function isWorkspaceSection(value: string): value is WorkspaceSection {
 
 const navigation: ReadonlyArray<{ id: WorkspaceSection; label: string; icon: string }> = [
   { id: "overview", label: "Overview", icon: "⌂" },
+  { id: "clients", label: "Clients", icon: "◇" },
   { id: "invoices", label: "Invoices", icon: "▤" },
+  { id: "reconciliation", label: "Reconciliation", icon: "⇄" },
   { id: "approvals", label: "Approvals", icon: "✓" },
   { id: "connections", label: "Connections", icon: "⌘" },
   { id: "automations", label: "Automations", icon: "↻" },
@@ -38,6 +44,16 @@ const pageDetails: Record<WorkspaceSection, { eyebrow: string; title: string; de
     eyebrow: "WORKSPACE OVERVIEW",
     title: "Accounts payable, with context.",
     description: "Bring invoice facts, company policy, and past decisions together before an approval is made.",
+  },
+  clients: {
+    eyebrow: "CLIENT ACCOUNTING CONTEXT",
+    title: "Clients",
+    description: "Manage client records and each client’s chart of accounts used for invoice coding recommendations.",
+  },
+  reconciliation: {
+    eyebrow: "PAYMENT REVIEW",
+    title: "Reconciliation",
+    description: "Compare payable invoices with client bank transactions, review the evidence, and confirm full or partial allocations.",
   },
   invoices: {
     eyebrow: "ACCOUNTS PAYABLE",
@@ -174,6 +190,12 @@ function WorkspaceSectionContent({ section, userEmail }: { section: WorkspaceSec
 
   if (section === "invoices") {
     return <InvoiceIntakeWorkspace />;
+  }
+  if (section === "clients") {
+    return <ClientDirectory />;
+  }
+  if (section === "reconciliation") {
+    return <ReconciliationWorkspace />;
   }
   if (section === "approvals") {
     return <EmptySection icon="✓" title="No decisions waiting for approval" detail="When an invoice needs a person’s judgment, it will appear here with the supporting evidence and any unresolved questions." action={{ href: "/invoices", label: "View invoices" }} />;

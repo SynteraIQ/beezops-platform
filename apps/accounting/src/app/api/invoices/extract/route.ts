@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
     }
 
     const [existingInvoice] = await database
-      .select({ id: invoices.id })
+      .select({ id: invoices.id, sourceVersion: invoices.sourceVersion })
       .from(invoices)
       .where(and(
         eq(invoices.organizationId, workspace.id),
@@ -144,6 +144,17 @@ export async function POST(request: NextRequest) {
           ));
       }
     }
+    const invoiceUpdate = {
+      sourceFileName: file.name,
+      sourceMimeType: file.mimeType,
+      sourceVersion: file.version,
+      sourceModifiedAt: file.modifiedTime ? new Date(file.modifiedTime) : null,
+      status: "queued" as const,
+      extractedData: null,
+      validationIssues: [],
+      updatedAt: now,
+      ...(existingInvoice && existingInvoice.sourceVersion !== file.version ? { accountingClientId: null } : {}),
+    };
     const [invoice] = await database
       .insert(invoices)
       .values({
@@ -160,16 +171,7 @@ export async function POST(request: NextRequest) {
       })
       .onConflictDoUpdate({
         target: [invoices.organizationId, invoices.providerConnectionId, invoices.sourceFileId],
-        set: {
-          sourceFileName: file.name,
-          sourceMimeType: file.mimeType,
-          sourceVersion: file.version,
-          sourceModifiedAt: file.modifiedTime ? new Date(file.modifiedTime) : null,
-          status: "queued",
-          extractedData: null,
-          validationIssues: [],
-          updatedAt: now,
-        },
+        set: invoiceUpdate,
       })
       .returning({ id: invoices.id });
     if (!invoice) throw new Error("Could not create the invoice record.");
