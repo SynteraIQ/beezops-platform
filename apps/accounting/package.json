@@ -10,6 +10,7 @@
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
+    "@nangohq/frontend": "^0.71.13",
     "next": "^16.4.0",
     "next-auth": "^4.24.15",
     "react": "^19.3.0",

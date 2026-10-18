@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions, googleOAuthConfigured } from "../../auth";
 import { SignOutButton } from "../sign-in-button";
+import { GoogleDriveConnect } from "./google-drive-connect";
 
 export const workspaceSections = [
   "overview",
@@ -160,8 +161,7 @@ function WorkspaceSectionContent({ section, userEmail }: { section: WorkspaceSec
         <section className="section-heading"><div><span className="section-kicker">DOCUMENT SOURCES</span><h2>Provider connections</h2></div><span className="section-note">Account access is separate from sign-in</span></section>
         <article className="provider-card">
           <div className="provider-logo google-drive-logo" aria-hidden="true"><svg viewBox="0 0 48 48"><path fill="#00832d" d="M16.4 4h12.1L43 29.1H30.9z"/><path fill="#0066da" d="M9.9 15.1 3.7 25.9 16.1 47h12.3L16.1 25.9z"/><path fill="#ffba00" d="M16.1 47h12.3l14.6-25.1H30.7z"/></svg></div>
-          <div className="provider-copy"><div className="provider-title"><h2>Google Drive</h2><span className="status-pill status-off">Not connected</span></div><p>Import invoice files from a selected Drive folder. This provider connection will request Drive access separately from Google sign-in.</p><span className="provider-scopes">Provider: Google Drive <span>·</span> Status: not configured</span></div>
-          <button className="secondary-button" type="button" disabled title="Google Drive connection flow is not configured yet">Connect Google Drive</button>
+          <div className="provider-copy"><div className="provider-title"><h2>Google Drive</h2><GoogleDriveConnect /></div><p>Authorize Drive separately from sign-in. File selection and invoice import will use this connection.</p><span className="provider-scopes">Provider: Google Drive <span>·</span> Scope is configured in Nango</span></div>
         </article>
         <div className="connection-note"><span className="note-icon">i</span><p><strong>Separate authorization</strong> — signing in with Google identifies your BeezOps user. Connecting Drive will be a separate consent flow with its own requested access.</p></div>
       </div>
@@ -169,7 +169,7 @@ function WorkspaceSectionContent({ section, userEmail }: { section: WorkspaceSec
   }
 
   if (section === "invoices") {
-    return <EmptySection icon="▤" title="No invoices to review" detail="Connect a source or add an invoice to begin. Each invoice view will show extracted fields, context used, recommendations, and evidence." action={{ href: "/connections", label: "Set up a connection" }} />;
+    return <EmptySection icon="▤" title="No invoices imported yet" detail="Invoice file selection and import from Google Drive are not available yet. Once intake is added, this page will show extracted fields, context, recommendations, and evidence." action={{ href: "/connections", label: "Manage connections" }} />;
   }
   if (section === "approvals") {
     return <EmptySection icon="✓" title="No decisions waiting for approval" detail="When an invoice needs a person’s judgment, it will appear here with the supporting evidence and any unresolved questions." action={{ href: "/invoices", label: "View invoices" }} />;
