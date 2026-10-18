@@ -8,4 +8,5 @@ export {
 export type { JsonObject, JsonValue } from "./agent-learning";
 export { providerConnections } from "./connections";
 export type { ProviderAccountMetadata } from "./connections";
+export { documentSourceItems, documentSources } from "./document-sources";
 export { authIdentities, organizationMemberships, organizations, users } from "./tenants";
