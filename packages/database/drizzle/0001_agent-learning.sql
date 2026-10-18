@@ -14,7 +14,8 @@ CREATE TABLE "agent_runs" (
 	"error_summary" varchar(1000),
 	"started_at" timestamp with time zone,
 	"completed_at" timestamp with time zone,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "agent_runs_organization_product_id_unique" UNIQUE("organization_id","product_key","id")
 );
 --> statement-breakpoint
 CREATE TABLE "knowledge_evidence" (
@@ -24,7 +25,7 @@ CREATE TABLE "knowledge_evidence" (
 	"learning_event_id" uuid NOT NULL,
 	"relation" varchar(32) NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "knowledge_evidence_organization_id_knowledge_item_id_learning_event_id_relation_pk" PRIMARY KEY("organization_id","knowledge_item_id","learning_event_id","relation")
+	CONSTRAINT "knowledge_evidence_pk" PRIMARY KEY("organization_id","knowledge_item_id","learning_event_id","relation")
 );
 --> statement-breakpoint
 CREATE TABLE "knowledge_items" (
@@ -46,6 +47,7 @@ CREATE TABLE "knowledge_items" (
 	"supersedes_id" uuid,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "knowledge_items_organization_product_id_unique" UNIQUE("organization_id","product_key","id"),
 	CONSTRAINT "knowledge_items_confidence_range_check" CHECK ("knowledge_items"."confidence" >= 0 and "knowledge_items"."confidence" <= 1),
 	CONSTRAINT "knowledge_items_version_positive_check" CHECK ("knowledge_items"."version" > 0)
 );
@@ -66,7 +68,8 @@ CREATE TABLE "learning_events" (
 	"final_value" jsonb,
 	"details" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"occurred_at" timestamp with time zone NOT NULL,
-	"recorded_at" timestamp with time zone DEFAULT now() NOT NULL
+	"recorded_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "learning_events_organization_product_id_unique" UNIQUE("organization_id","product_key","id")
 );
 --> statement-breakpoint
 CREATE TABLE "run_knowledge_items" (
@@ -77,7 +80,7 @@ CREATE TABLE "run_knowledge_items" (
 	"retrieval_reason" varchar(1000) NOT NULL,
 	"rank" integer NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "run_knowledge_items_organization_id_agent_run_id_knowledge_item_id_pk" PRIMARY KEY("organization_id","agent_run_id","knowledge_item_id")
+	CONSTRAINT "run_knowledge_items_pk" PRIMARY KEY("organization_id","agent_run_id","knowledge_item_id")
 );
 --> statement-breakpoint
 ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -92,10 +95,7 @@ ALTER TABLE "run_knowledge_items" ADD CONSTRAINT "run_knowledge_items_run_same_s
 ALTER TABLE "run_knowledge_items" ADD CONSTRAINT "run_knowledge_items_item_same_scope_fk" FOREIGN KEY ("organization_id","product_key","knowledge_item_id") REFERENCES "public"."knowledge_items"("organization_id","product_key","id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "agent_runs_organization_product_created_idx" ON "agent_runs" USING btree ("organization_id","product_key","created_at");--> statement-breakpoint
 CREATE INDEX "agent_runs_organization_status_idx" ON "agent_runs" USING btree ("organization_id","status");--> statement-breakpoint
-CREATE UNIQUE INDEX "agent_runs_organization_product_id_unique" ON "agent_runs" USING btree ("organization_id","product_key","id");--> statement-breakpoint
 CREATE INDEX "knowledge_items_organization_product_status_idx" ON "knowledge_items" USING btree ("organization_id","product_key","status");--> statement-breakpoint
 CREATE INDEX "knowledge_items_organization_product_scope_idx" ON "knowledge_items" USING btree ("organization_id","product_key","scope_type","scope_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "knowledge_items_organization_product_id_unique" ON "knowledge_items" USING btree ("organization_id","product_key","id");--> statement-breakpoint
 CREATE INDEX "learning_events_organization_product_recorded_idx" ON "learning_events" USING btree ("organization_id","product_key","recorded_at");--> statement-breakpoint
-CREATE UNIQUE INDEX "learning_events_organization_idempotency_unique" ON "learning_events" USING btree ("organization_id","product_key","idempotency_key");--> statement-breakpoint
-CREATE UNIQUE INDEX "learning_events_organization_product_id_unique" ON "learning_events" USING btree ("organization_id","product_key","id");
+CREATE UNIQUE INDEX "learning_events_organization_idempotency_unique" ON "learning_events" USING btree ("organization_id","product_key","idempotency_key");

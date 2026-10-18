@@ -9,6 +9,7 @@ import {
   pgTable,
   primaryKey,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
   varchar,
@@ -42,7 +43,7 @@ export const agentRuns = pgTable("agent_runs", {
     table.createdAt,
   ),
   organizationStatusIndex: index("agent_runs_organization_status_idx").on(table.organizationId, table.status),
-  organizationProductIdUnique: uniqueIndex("agent_runs_organization_product_id_unique").on(
+  organizationProductIdUnique: unique("agent_runs_organization_product_id_unique").on(
     table.organizationId,
     table.productKey,
     table.id,
@@ -77,7 +78,7 @@ export const learningEvents = pgTable("learning_events", {
     table.productKey,
     table.idempotencyKey,
   ),
-  organizationProductIdUnique: uniqueIndex("learning_events_organization_product_id_unique").on(
+  organizationProductIdUnique: unique("learning_events_organization_product_id_unique").on(
     table.organizationId,
     table.productKey,
     table.id,
@@ -120,7 +121,7 @@ export const knowledgeItems = pgTable("knowledge_items", {
     table.scopeType,
     table.scopeId,
   ),
-  organizationProductIdUnique: uniqueIndex("knowledge_items_organization_product_id_unique").on(
+  organizationProductIdUnique: unique("knowledge_items_organization_product_id_unique").on(
     table.organizationId,
     table.productKey,
     table.id,
@@ -145,7 +146,10 @@ export const knowledgeEvidence = pgTable("knowledge_evidence", {
   relation: varchar("relation", { length: 32 }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
-  evidencePrimaryKey: primaryKey({ columns: [table.organizationId, table.knowledgeItemId, table.learningEventId, table.relation] }),
+  evidencePrimaryKey: primaryKey({
+    name: "knowledge_evidence_pk",
+    columns: [table.organizationId, table.knowledgeItemId, table.learningEventId, table.relation],
+  }),
   knowledgeItemSameScopeForeignKey: foreignKey({
     name: "knowledge_evidence_item_same_scope_fk",
     columns: [table.organizationId, table.productKey, table.knowledgeItemId],
@@ -167,7 +171,10 @@ export const runKnowledgeItems = pgTable("run_knowledge_items", {
   rank: integer("rank").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
-  runKnowledgePrimaryKey: primaryKey({ columns: [table.organizationId, table.agentRunId, table.knowledgeItemId] }),
+  runKnowledgePrimaryKey: primaryKey({
+    name: "run_knowledge_items_pk",
+    columns: [table.organizationId, table.agentRunId, table.knowledgeItemId],
+  }),
   agentRunSameScopeForeignKey: foreignKey({
     name: "run_knowledge_items_run_same_scope_fk",
     columns: [table.organizationId, table.productKey, table.agentRunId],

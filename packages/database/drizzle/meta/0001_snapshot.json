@@ -1,5 +1,5 @@
 {
-  "id": "5cfdb07d-0b8b-45da-b725-b92e7cc3c0f6",
+  "id": "dd3631f7-a1d1-4b8e-b25e-62a7010a6262",
   "prevId": "17dc6b4f-1562-411d-8704-9a24b31442a7",
   "version": "7",
   "dialect": "postgresql",
@@ -155,33 +155,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "agent_runs_organization_product_id_unique": {
-          "name": "agent_runs_organization_product_id_unique",
-          "columns": [
-            {
-              "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "product_key",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -200,7 +173,17 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "agent_runs_organization_product_id_unique": {
+          "name": "agent_runs_organization_product_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organization_id",
+            "product_key",
+            "id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -285,8 +268,8 @@
         }
       },
       "compositePrimaryKeys": {
-        "knowledge_evidence_organization_id_knowledge_item_id_learning_event_id_relation_pk": {
-          "name": "knowledge_evidence_organization_id_knowledge_item_id_learning_event_id_relation_pk",
+        "knowledge_evidence_pk": {
+          "name": "knowledge_evidence_pk",
           "columns": [
             "organization_id",
             "knowledge_item_id",
@@ -476,33 +459,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "knowledge_items_organization_product_id_unique": {
-          "name": "knowledge_items_organization_product_id_unique",
-          "columns": [
-            {
-              "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "product_key",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -538,7 +494,17 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "knowledge_items_organization_product_id_unique": {
+          "name": "knowledge_items_organization_product_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organization_id",
+            "product_key",
+            "id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {
         "knowledge_items_confidence_range_check": {
@@ -710,33 +676,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "learning_events_organization_product_id_unique": {
-          "name": "learning_events_organization_product_id_unique",
-          "columns": [
-            {
-              "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "product_key",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -785,7 +724,17 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "learning_events_organization_product_id_unique": {
+          "name": "learning_events_organization_product_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organization_id",
+            "product_key",
+            "id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -876,8 +825,8 @@
         }
       },
       "compositePrimaryKeys": {
-        "run_knowledge_items_organization_id_agent_run_id_knowledge_item_id_pk": {
-          "name": "run_knowledge_items_organization_id_agent_run_id_knowledge_item_id_pk",
+        "run_knowledge_items_pk": {
+          "name": "run_knowledge_items_pk",
           "columns": [
             "organization_id",
             "agent_run_id",
