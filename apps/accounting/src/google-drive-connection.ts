@@ -1,6 +1,6 @@
-import { createHmac } from "node:crypto";
 import { getServerSession } from "next-auth";
 import { authOptions } from "./auth";
+import { getWorkspaceForUser } from "./tenant-service";
 
 const nangoApiBaseUrl = "https://api.nango.dev";
 
@@ -25,16 +25,12 @@ export interface GoogleDriveConnectionStatus {
   state: "connected" | "not-connected" | "not-configured";
 }
 
-async function getSignedInAccount() {
+async function getSignedInWorkspace() {
   const session = await getServerSession(authOptions);
-  const email = session?.user?.email?.trim().toLowerCase();
-  if (!email) return null;
-  const identitySecret = process.env.NEXTAUTH_SECRET?.trim();
-  if (!identitySecret) return null;
+  const userId = session?.user?.id;
+  if (!userId) return null;
 
-  return {
-    id: createHmac("sha256", identitySecret).update(email).digest("hex"),
-  };
+  return getWorkspaceForUser(userId);
 }
 
 function getNangoConfiguration() {
@@ -45,9 +41,9 @@ function getNangoConfiguration() {
 }
 
 export async function createGoogleDriveConnectSession(): Promise<string | null> {
-  const account = await getSignedInAccount();
+  const workspace = await getSignedInWorkspace();
   const config = getNangoConfiguration();
-  if (!account || !config) return null;
+  if (!workspace || !config) return null;
 
   const response = await fetch(`${nangoApiBaseUrl}/connect/sessions`, {
     method: "POST",
@@ -57,7 +53,8 @@ export async function createGoogleDriveConnectSession(): Promise<string | null> 
     },
     body: JSON.stringify({
       tags: {
-        end_user_id: account.id,
+        end_user_id: workspace.id,
+        organization_id: workspace.id,
       },
       allowed_integrations: [config.integrationKey],
     }),
@@ -80,12 +77,12 @@ export async function createGoogleDriveConnectSession(): Promise<string | null> 
 }
 
 export async function getGoogleDriveConnectionStatus(): Promise<GoogleDriveConnectionStatus> {
-  const account = await getSignedInAccount();
+  const workspace = await getSignedInWorkspace();
   const config = getNangoConfiguration();
-  if (!account || !config) return { state: "not-configured" };
+  if (!workspace || !config) return { state: "not-configured" };
 
   const query = new URLSearchParams({
-    "tags[end_user_id]": account.id,
+    "tags[end_user_id]": workspace.id,
     limit: "100",
   });
   const response = await fetch(`${nangoApiBaseUrl}/connections?${query}`, {
@@ -106,7 +103,8 @@ export async function getGoogleDriveConnectionStatus(): Promise<GoogleDriveConne
   const activeConnection = result.connections?.find(
     (connection) =>
       connection.provider_config_key === config.integrationKey &&
-      connection.tags?.end_user_id === account.id &&
+      connection.tags?.end_user_id === workspace.id &&
+      connection.tags?.organization_id === workspace.id &&
       !connection.errors?.some((error) => error.type === "auth"),
   );
 
