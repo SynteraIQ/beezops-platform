@@ -3,7 +3,7 @@
 import Nango from "@nangohq/frontend";
 import { useCallback, useEffect, useState } from "react";
 
-type ConnectionState = "loading" | "connected" | "not-connected" | "not-configured" | "error";
+type ConnectionState = "loading" | "connected" | "not-connected" | "not-configured" | "reauthorization-required" | "error";
 
 interface StatusResponse {
   state?: ConnectionState;
@@ -16,7 +16,7 @@ export function GoogleDriveConnect() {
   const [errorMessage, setErrorMessage] = useState("");
 
   const refreshStatus = useCallback(async () => {
-    const response = await fetch("/api/connections/google-drive/status", { cache: "no-store" });
+    const response = await fetch("/api/connections/google-drive/sync", { method: "POST", cache: "no-store" });
     const result = (await response.json()) as StatusResponse;
     if (!response.ok || !result.state) throw new Error(result.error ?? "Could not load connection status.");
     setState(result.state);
@@ -59,15 +59,15 @@ export function GoogleDriveConnect() {
   }
 
   const connected = state === "connected";
-  const statusLabel = connected
-    ? "Connected"
-    : state === "loading"
-      ? "Checking…"
-      : state === "not-configured"
-        ? "Setup required"
-        : state === "error"
-          ? "Status unavailable"
-          : "Not connected";
+  const statusLabels: Record<ConnectionState, string> = {
+    loading: "Checking…",
+    connected: "Connected",
+    "not-connected": "Not connected",
+    "not-configured": "Setup required",
+    "reauthorization-required": "Reconnect required",
+    error: "Status unavailable",
+  };
+  const statusLabel = statusLabels[state];
 
   return (
     <>
