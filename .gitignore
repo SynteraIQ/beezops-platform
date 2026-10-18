@@ -7,3 +7,10 @@ node_modules
 dist
 coverage
 *.tsbuildinfo
+.vercel
+.swc
+out
+build
+next-env.d.ts
+*.log
+.DS_Store
