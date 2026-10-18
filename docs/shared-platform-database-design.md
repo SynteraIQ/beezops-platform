@@ -18,6 +18,21 @@ The first product workflow is **Invoice & Bank Statement Reconciliation**. RedZo
 - Persist structured results and evidence references; avoid retaining raw prompts or sensitive document contents by default.
 - Workflow configuration is versioned data validated against a versioned application schema. Do not store executable code in the database.
 
+## Schema change workflow
+
+The Drizzle table definitions and their generated migration belong in the same pull request. This keeps the TypeScript model and the database change reviewable together.
+
+- Edit the schema under `packages/database/src/schema/`.
+- Generate a migration with `npm run db:generate --workspace @beezops/database -- --name=<change-name>`.
+- Review the generated SQL under `packages/database/drizzle/` and commit it with the schema changes.
+- Apply pending migrations to the intended database with `npm run db:migrate --workspace @beezops/database` after providing that environment's `DATABASE_URL`.
+
+For local development, place `DATABASE_URL` in the repository-root `.env.local`; the Drizzle config loads that file (and `.env` as a fallback). These files are ignored by Git. Vercel-provided environment variables take precedence when the migration command runs in a deployment environment.
+
+Drizzle records applied migration versions in its migration ledger, so the migration command can run on every deployment while applying only versions the database has not seen. Generating a migration does not connect to or modify a database. Applying migrations is a distinct deployment step; `npm run dev` and the application build do not apply them automatically. Never point a local migration command at staging or production by accident.
+
+For this first schema PR, validate the migration by reviewing the generated SQL, running `npm run check-types --workspace @beezops/database`, and running `npm run db:migrate --workspace @beezops/database` only with the dev database URL when you are ready to create the dev tables.
+
 ## Shared platform tables
 
 ### Identity and tenant tables
