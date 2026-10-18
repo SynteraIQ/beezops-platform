@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@beezops/database": "^0.1.0",
+    "@beezops/domain-accounting": "^0.1.0",
     "@nangohq/frontend": "^0.71.13",
     "next": "^16.4.0",
     "next-auth": "^4.24.15",

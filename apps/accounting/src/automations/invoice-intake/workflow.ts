@@ -1,14 +1,14 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, or } from "drizzle-orm";
 import { getDatabase, invoiceExtractionAttempts, invoices } from "@beezops/database";
-import { FatalError, RetryableError, getStepMetadata } from "workflow";
-import { DriveApiError, downloadDriveInvoicePdf } from "../../google-drive-invoice-files";
 import {
-  extractInvoicePdf,
   invoiceExtractionPromptVersion,
+  invoiceExtractionTool,
   invoiceExtractionSchemaVersion,
   toJsonObject,
   validationIssuesToJson,
-} from "../../invoice-extraction";
+} from "@beezops/domain-accounting/tools/invoice-extraction";
+import { FatalError, RetryableError, getStepMetadata } from "workflow";
+import { DriveApiError, downloadDriveInvoicePdf } from "../../google-drive-invoice-files";
 import type { InvoiceIntakeTriggerSource } from "./definition";
 
 export interface InvoiceIntakeWorkflowInput {
@@ -64,18 +64,27 @@ async function extractValidateAndPersist(
       issueCount: attempt.validationIssues.length,
     };
   }
+  if (attempt.status === "failed") {
+    throw new FatalError("This extraction attempt has been replaced or has already failed.");
+  }
   if (attempt.sourceVersion !== input.sourceVersion) {
     throw new FatalError("The extraction attempt does not match the selected Drive file version.");
   }
 
   const now = new Date();
-  await database
+  const [runningAttempt] = await database
     .update(invoiceExtractionAttempts)
     .set({ status: "processing", startedAt: now, errorSummary: null })
     .where(and(
       eq(invoiceExtractionAttempts.id, input.attemptId),
       eq(invoiceExtractionAttempts.organizationId, input.organizationId),
-    ));
+      or(
+        eq(invoiceExtractionAttempts.status, "queued"),
+        eq(invoiceExtractionAttempts.status, "processing"),
+      ),
+    ))
+    .returning({ id: invoiceExtractionAttempts.id });
+  if (!runningAttempt) throw new FatalError("This extraction attempt has been replaced before it started.");
   await database
     .update(invoices)
     .set({ status: "processing", updatedAt: now })
@@ -92,14 +101,14 @@ async function extractValidateAndPersist(
       input.fileId,
       input.sourceVersion,
     );
-    const extraction = await extractInvoicePdf({ base64, fileName: file.name });
+    const extraction = await invoiceExtractionTool.execute({ base64 });
     const status = extraction.issues.length > 0 ? "needs_review" : "ready_for_matching";
     const validationIssues = validationIssuesToJson(extraction.issues);
     const extractedData = toJsonObject(extraction.invoice);
     const completedAt = new Date();
 
-    await database.transaction(async (transaction) => {
-      await transaction
+    const persisted = await database.transaction(async (transaction) => {
+      const [updatedAttempt] = await transaction
         .update(invoiceExtractionAttempts)
         .set({
           status,
@@ -114,7 +123,10 @@ async function extractValidateAndPersist(
         .where(and(
           eq(invoiceExtractionAttempts.id, input.attemptId),
           eq(invoiceExtractionAttempts.organizationId, input.organizationId),
-        ));
+          eq(invoiceExtractionAttempts.status, "processing"),
+        ))
+        .returning({ id: invoiceExtractionAttempts.id });
+      if (!updatedAttempt) return false;
       await transaction
         .update(invoices)
         .set({
@@ -130,7 +142,9 @@ async function extractValidateAndPersist(
           eq(invoices.organizationId, input.organizationId),
           eq(invoices.sourceVersion, input.sourceVersion),
         ));
+      return true;
     });
+    if (!persisted) throw new FatalError("This extraction attempt was replaced before its result could be saved.");
 
     console.info("[accounting:invoice-intake] Extraction step completed", {
       attemptId: input.attemptId,
@@ -177,14 +191,30 @@ async function markExtractionFailed(input: InvoiceIntakeWorkflowInput, message: 
   const database = getDatabase();
   const completedAt = new Date();
   const safeMessage = message.slice(0, 1000);
-  await database.transaction(async (transaction) => {
-    await transaction
+  const markedFailed = await database.transaction(async (transaction) => {
+    const [updatedAttempt] = await transaction
       .update(invoiceExtractionAttempts)
       .set({ status: "failed", errorSummary: safeMessage, completedAt })
       .where(and(
         eq(invoiceExtractionAttempts.id, input.attemptId),
         eq(invoiceExtractionAttempts.organizationId, input.organizationId),
-      ));
+        or(
+          eq(invoiceExtractionAttempts.status, "queued"),
+          eq(invoiceExtractionAttempts.status, "processing"),
+        ),
+      ))
+      .returning({ id: invoiceExtractionAttempts.id });
+    if (!updatedAttempt) return false;
+    const [latestAttempt] = await transaction
+      .select({ id: invoiceExtractionAttempts.id })
+      .from(invoiceExtractionAttempts)
+      .where(and(
+        eq(invoiceExtractionAttempts.organizationId, input.organizationId),
+        eq(invoiceExtractionAttempts.invoiceId, input.invoiceId),
+      ))
+      .orderBy(desc(invoiceExtractionAttempts.createdAt))
+      .limit(1);
+    if (latestAttempt?.id !== input.attemptId) return true;
     await transaction
       .update(invoices)
       .set({
@@ -197,7 +227,14 @@ async function markExtractionFailed(input: InvoiceIntakeWorkflowInput, message: 
         eq(invoices.organizationId, input.organizationId),
         eq(invoices.sourceVersion, input.sourceVersion),
       ));
+    return true;
   });
+  if (!markedFailed) {
+    console.info("[accounting:invoice-intake] Skipped failure update for a replaced extraction attempt", {
+      attemptId: input.attemptId,
+    });
+    return;
+  }
   console.error("[accounting:invoice-intake] Extraction workflow failed", {
     attemptId: input.attemptId,
     error: safeMessage,

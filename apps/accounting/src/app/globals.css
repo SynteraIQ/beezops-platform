@@ -207,6 +207,11 @@ h1 { margin: 17px 0 11px; font: 700 clamp(34px, 4vw, 46px)/1.08 Manrope, sans-se
 .invoice-result-field small { overflow-wrap: anywhere; color: #858b95; font-size: 9px; line-height: 1.45; }
 .invoice-result-field em { color: #83bfa0; font-size: 8px; font-style: normal; }
 .invoice-line-items { display: grid; gap: 8px; padding: 0 12px 12px; }
+.invoice-tax-breakdown { display: grid; gap: 8px; padding: 0 12px 12px; }
+.invoice-tax-breakdown > strong { color: #aeb4bd; font-size: 9px; font-weight: 600; }
+.invoice-tax-row, .invoice-tax-component { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+.invoice-tax-row { padding: 8px; border: 1px solid #25282d; border-radius: 5px; }
+.invoice-tax-component { grid-column: 1 / -1; padding-top: 7px; border-top: 1px solid #25282d; }
 .invoice-line-items > strong { color: #aeb4bd; font-size: 9px; font-weight: 600; }
 .invoice-line-item { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 7px; }
 .invoice-line-item .invoice-result-field { padding: 7px; }
@@ -258,4 +263,5 @@ h1 { margin: 17px 0 11px; font: 700 clamp(34px, 4vw, 46px)/1.08 Manrope, sans-se
   .invoice-file-row { align-items: flex-start; flex-direction: column; }
   .invoice-result-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .invoice-line-item { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .invoice-tax-row, .invoice-tax-component { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

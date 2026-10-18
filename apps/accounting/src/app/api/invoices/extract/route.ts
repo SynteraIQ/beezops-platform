@@ -3,16 +3,22 @@ import { and, eq, or } from "drizzle-orm";
 import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { getDatabase, invoiceExtractionAttempts, invoices, providerConnections } from "@beezops/database";
+import {
+  invoiceExtractionPromptVersion,
+  invoiceExtractionSchemaVersion,
+} from "@beezops/domain-accounting/tools/invoice-extraction";
 import { start } from "workflow/api";
 import { authOptions } from "../../../../auth";
 import { getDriveInvoiceFile } from "../../../../google-drive-invoice-files";
 import { runInvoiceIntakeExtraction } from "../../../../automations/invoice-intake/workflow";
 import { getWorkspaceForUser } from "../../../../tenant-service";
+import { isInvoiceExtractionStuck } from "../../../../invoice-extraction-status";
 
 interface ExtractRequest {
   connectionId?: unknown;
   fileId?: unknown;
   requestId?: unknown;
+  retryStuck?: unknown;
 }
 
 export async function POST(request: NextRequest) {
@@ -33,6 +39,7 @@ export async function POST(request: NextRequest) {
   const requestId = typeof body.requestId === "string" && /^[0-9a-f-]{36}$/i.test(body.requestId)
     ? body.requestId.toLowerCase()
     : "";
+  const retryStuck = body.retryStuck === true;
   if (!connectionId || !fileId || !requestId) {
     return NextResponse.json({ error: "Choose a Drive file and start a new extraction request." }, { status: 400 });
   }
@@ -77,6 +84,66 @@ export async function POST(request: NextRequest) {
         status: idempotentAttempt.status,
       }, { status: 202 });
     }
+
+    const [existingInvoice] = await database
+      .select({ id: invoices.id })
+      .from(invoices)
+      .where(and(
+        eq(invoices.organizationId, workspace.id),
+        eq(invoices.providerConnectionId, connection.id),
+        eq(invoices.sourceFileId, file.id),
+      ))
+      .limit(1);
+    if (existingInvoice) {
+      const [activeAttempt] = await database
+        .select({
+          id: invoiceExtractionAttempts.id,
+          workflowRunId: invoiceExtractionAttempts.workflowRunId,
+          status: invoiceExtractionAttempts.status,
+          createdAt: invoiceExtractionAttempts.createdAt,
+          startedAt: invoiceExtractionAttempts.startedAt,
+        })
+        .from(invoiceExtractionAttempts)
+        .where(and(
+          eq(invoiceExtractionAttempts.organizationId, workspace.id),
+          eq(invoiceExtractionAttempts.invoiceId, existingInvoice.id),
+          eq(invoiceExtractionAttempts.sourceVersion, file.version),
+          or(
+            eq(invoiceExtractionAttempts.status, "queued"),
+            eq(invoiceExtractionAttempts.status, "processing"),
+          ),
+        ))
+        .limit(1);
+      if (activeAttempt) {
+        const stuck = isInvoiceExtractionStuck(
+          activeAttempt.status,
+          activeAttempt.startedAt ?? activeAttempt.createdAt,
+        );
+        if (!retryStuck || !stuck) {
+          return NextResponse.json({
+            invoiceId: existingInvoice.id,
+            attemptId: activeAttempt.id,
+            runId: activeAttempt.workflowRunId,
+            status: activeAttempt.status,
+          }, { status: 202 });
+        }
+        await database
+          .update(invoiceExtractionAttempts)
+          .set({
+            status: "failed",
+            errorSummary: "Replaced by a new extraction request after becoming unresponsive.",
+            completedAt: now,
+          })
+          .where(and(
+            eq(invoiceExtractionAttempts.id, activeAttempt.id),
+            eq(invoiceExtractionAttempts.organizationId, workspace.id),
+            or(
+              eq(invoiceExtractionAttempts.status, "queued"),
+              eq(invoiceExtractionAttempts.status, "processing"),
+            ),
+          ));
+      }
+    }
     const [invoice] = await database
       .insert(invoices)
       .values({
@@ -107,32 +174,6 @@ export async function POST(request: NextRequest) {
       .returning({ id: invoices.id });
     if (!invoice) throw new Error("Could not create the invoice record.");
 
-    const [activeAttempt] = await database
-      .select({
-        id: invoiceExtractionAttempts.id,
-        workflowRunId: invoiceExtractionAttempts.workflowRunId,
-        status: invoiceExtractionAttempts.status,
-      })
-      .from(invoiceExtractionAttempts)
-      .where(and(
-        eq(invoiceExtractionAttempts.organizationId, workspace.id),
-        eq(invoiceExtractionAttempts.invoiceId, invoice.id),
-        eq(invoiceExtractionAttempts.sourceVersion, file.version),
-        or(
-          eq(invoiceExtractionAttempts.status, "queued"),
-          eq(invoiceExtractionAttempts.status, "processing"),
-        ),
-      ))
-      .limit(1);
-    if (activeAttempt) {
-      return NextResponse.json({
-        invoiceId: invoice.id,
-        attemptId: activeAttempt.id,
-        runId: activeAttempt.workflowRunId,
-        status: activeAttempt.status,
-      }, { status: 202 });
-    }
-
     const [createdAttempt] = await database
       .insert(invoiceExtractionAttempts)
       .values({
@@ -142,8 +183,8 @@ export async function POST(request: NextRequest) {
         triggerSource: "manual",
         sourceVersion: file.version,
         status: "queued",
-        promptVersion: "invoice-extraction.v1",
-        schemaVersion: "canonical-invoice.v1",
+        promptVersion: invoiceExtractionPromptVersion,
+        schemaVersion: invoiceExtractionSchemaVersion,
         triggeredByUserId: userId,
       })
       .onConflictDoNothing()

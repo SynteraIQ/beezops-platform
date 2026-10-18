@@ -8,6 +8,8 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..")
 loadEnv({ path: resolve(repositoryRoot, ".env.local") });
 loadEnv({ path: resolve(repositoryRoot, ".env") });
 
-const nextConfig: NextConfig = { transpilePackages: ["@beezops/database"] };
+const nextConfig: NextConfig = {
+  transpilePackages: ["@beezops/database", "@beezops/domain-accounting"],
+};
 
 export default withWorkflow(nextConfig);
