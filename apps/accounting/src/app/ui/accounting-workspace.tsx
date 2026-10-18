@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions, googleOAuthConfigured } from "../../auth";
+import { getWorkspaceForUser } from "../../tenant-service";
 import { SignOutButton } from "../sign-in-button";
 import { GoogleDriveConnect } from "./google-drive-connect";
 
@@ -70,7 +71,9 @@ const pageDetails: Record<WorkspaceSection, { eyebrow: string; title: string; de
 
 export async function AccountingWorkspace({ section }: { section: WorkspaceSection }) {
   const session = googleOAuthConfigured ? await getServerSession(authOptions) : null;
-  if (!session?.user) redirect("/login");
+  if (!session?.user?.id) redirect("/login");
+  const workspace = await getWorkspaceForUser(session.user.id);
+  if (!workspace) redirect("/setup-workspace");
 
   const page = pageDetails[section];
   const userName = session.user.name ?? session.user.email ?? "Google user";
@@ -84,7 +87,7 @@ export async function AccountingWorkspace({ section }: { section: WorkspaceSecti
         </Link>
 
         <div className="workspace-label">WORKSPACE</div>
-        <div className="workspace-switcher"><span className="workspace-icon">A</span><span className="workspace-name">Accounting workspace</span><span className="workspace-caret">⌄</span></div>
+        <div className="workspace-switcher" aria-label={`Workspace: ${workspace.name}`}><span className="workspace-icon">{workspace.name.slice(0, 1).toUpperCase()}</span><span className="workspace-name">{workspace.name}</span><span className="workspace-caret">⌄</span></div>
 
         <nav className="side-nav" aria-label="Main navigation">
           {navigation.map((item) => (
@@ -115,7 +118,7 @@ export async function AccountingWorkspace({ section }: { section: WorkspaceSecti
       <main className="main-panel">
         <header className="topbar">
           <div className="breadcrumb"><span>Accounting</span><span className="crumb-slash">/</span><strong>{section === "overview" ? "Overview" : page.title}</strong></div>
-          <div className="topbar-right"><span className="environment-badge"><i />DEMO WORKSPACE</span><span className="topbar-divider" /><span className="topbar-user">{initial}</span></div>
+          <div className="topbar-right"><span className="environment-badge"><i />{workspace.name.toUpperCase()}</span><span className="topbar-divider" /><span className="topbar-user">{initial}</span></div>
         </header>
         <div className="content">
           <div className="page-intro">
