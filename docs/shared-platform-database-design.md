@@ -109,6 +109,7 @@ One invocation of an agent, whether started directly or by an automation step.
 - `result` JSONB (structured recommendation and evidence references)
 - `error_code`, `error_summary` (sanitized)
 - `started_at`, `completed_at`, `created_at`
+- `source_type` and `source_id` are nullable for runs without a single primary record.
 
 Indexes: `(organization_id, product_key, created_at)` and `(organization_id, status)`.
 
@@ -121,6 +122,7 @@ Append-only observations, outcomes, and human corrections. A correction is evide
 - `agent_run_id` (nullable FK to `agent_runs`)
 - `event_type` (for example, `review_correction`, `decision_confirmed`, `outcome_observed`)
 - `source_type`, `source_id` (PR/review for RedZone; invoice/review for Accounting)
+- `idempotency_key` (nullable; organization/product scoped when supplied)
 - `subject_type`, `subject_id` (repository/module or vendor/invoice line)
 - `actor_user_id` (nullable for system observations)
 - `proposed_value`, `final_value`, `details` JSONB; values must be minimized and sanitized
@@ -151,10 +153,11 @@ Many-to-many provenance between a knowledge item and the learning events that su
 
 - `knowledge_item_id` FK to `knowledge_items`
 - `learning_event_id` FK to `learning_events`
+- `organization_id`, `product_key` are carried through the relation and checked against both parent rows, preventing cross-tenant or cross-product evidence links.
 - `relation` (`supports`, `contradicts`, `updates`)
 - `created_at`
 
-Primary key: `(knowledge_item_id, learning_event_id, relation)`.
+Primary key: `(organization_id, knowledge_item_id, learning_event_id, relation)`.
 
 #### `run_knowledge_items`
 
@@ -162,9 +165,10 @@ Records which knowledge items an agent run retrieved and why, so the UI can expl
 
 - `agent_run_id` FK to `agent_runs`
 - `knowledge_item_id` FK to `knowledge_items`
+- `organization_id`, `product_key` are checked against both parent rows, preventing cross-tenant or cross-product retrieval links.
 - `retrieval_reason`, `rank`, `created_at`
 
-Primary key: `(agent_run_id, knowledge_item_id)`.
+Primary key: `(organization_id, agent_run_id, knowledge_item_id)`.
 
 ### Automation tables
 
