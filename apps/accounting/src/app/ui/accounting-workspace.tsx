@@ -58,7 +58,7 @@ const pageDetails: Record<WorkspaceSection, { eyebrow: string; title: string; de
   invoices: {
     eyebrow: "ACCOUNTS PAYABLE",
     title: "Invoices",
-    description: "Review incoming invoices, extracted details, and the evidence behind each recommendation.",
+    description: "Use Invoices to review discovered PDFs and Sources to manage the folders RedZone scans.",
   },
   approvals: {
     eyebrow: "HUMAN REVIEW",
