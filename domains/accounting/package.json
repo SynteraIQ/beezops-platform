@@ -1,5 +1,16 @@
 {
   "name": "@beezops/domain-accounting",
   "private": true,
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    "./tools/invoice-extraction": "./src/tools/invoice-extraction/index.ts",
+    "./tools/gl-coding": "./src/tools/gl-coding/index.ts",
+    "./tools/bank-statement-extraction": "./src/tools/bank-statement-extraction/index.ts",
+    "./tools/payment-reconciliation": "./src/tools/payment-reconciliation/index.ts"
+  },
+  "dependencies": {
+    "@beezops/database": "^0.1.0",
+    "@beezops/tools": "^0.1.0"
+  }
 }
