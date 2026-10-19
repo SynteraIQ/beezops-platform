@@ -23,6 +23,7 @@ Extract the readable information from one invoice PDF into the accounting canoni
 - Use `YYYY-MM-DD` for dates and an ISO 4217 three-letter code for currency.
 - For provided fields, include a short exact evidence excerpt and page number when available. Confidence must be between 0 and 1, or null.
 - Preserve readable line items.
+- Extract the Bill To name and address exactly as printed when present. Preserve the full address as one readable field; do not treat it as verified client identity or infer missing address components.
 - Extract each printed tax row, including HSN/SAC, taxable amount, printed tax label, normalized tax type when clear, rate, and amount. Preserve the printed label separately from the normalized type.
 - For GST invoices, preserve labels such as `CGST OUTPUT 9%` and `SGST OUTPUT 9%` exactly in `printedLabel`; normalize `taxType` to `CGST` or `SGST` only when the label makes the type clear. Capture IGST, UTGST, cess, and other printed tax components when present.
 - Do not assume an invoice is governed by GST. Do not infer a tax type, rate, or amount that the document does not show clearly.

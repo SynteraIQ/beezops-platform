@@ -33,6 +33,7 @@ interface InvoiceSourceFolder {
 
 interface InvoiceRecord {
   id: string;
+  accountingClientId: string | null;
   connectionId: string;
   sourceFileId: string;
   sourceFileName: string;
@@ -40,6 +41,32 @@ interface InvoiceRecord {
   extractedData: Record<string, unknown> | null;
   validationIssues: unknown[];
   updatedAt: string;
+}
+
+interface AccountingClientRecord {
+  id: string;
+  legalName: string;
+  billingAddress: Record<string, unknown>;
+  status: string;
+}
+
+interface GlAccountOption {
+  id: string;
+  code: string;
+  name: string;
+}
+
+interface LineCodingSuggestion {
+  id: string;
+  lineIndex: number;
+  recommendedGlAccountId: string | null;
+  approvedGlAccountId: string | null;
+  rationale: string;
+  evidence: { excerpts?: string[] };
+  confidence: string | null;
+  status: string;
+  accountCode: string | null;
+  accountName: string | null;
 }
 
 interface FieldDetail {
@@ -66,6 +93,12 @@ function readField(field: unknown): FieldDetail {
     confidence: typeof record.confidence === "number" ? record.confidence : null,
     page: typeof record.page === "number" ? record.page : null,
   };
+}
+
+function rawFieldValue(field: unknown): string {
+  if (typeof field !== "object" || field === null || Array.isArray(field)) return "";
+  const value = (field as Record<string, unknown>).value;
+  return typeof value === "string" ? value : "";
 }
 
 function statusLabel(status: string, updatedAt: string): string {
@@ -101,6 +134,7 @@ export function InvoiceIntakeWorkspace() {
   const [sourceFolder, setSourceFolder] = useState<InvoiceSourceFolder | null>(null);
   const [configuringFolder, setConfiguringFolder] = useState(false);
   const [invoices, setInvoices] = useState<InvoiceRecord[]>([]);
+  const [clients, setClients] = useState<AccountingClientRecord[]>([]);
   const [busyFileId, setBusyFileId] = useState<string | null>(null);
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -112,6 +146,13 @@ export function InvoiceIntakeWorkspace() {
     const payload = (await response.json()) as { invoices?: InvoiceRecord[]; error?: string };
     if (!response.ok) throw new Error(payload.error ?? "Could not load invoices.");
     setInvoices(payload.invoices ?? []);
+  }, []);
+
+  const loadClients = useCallback(async () => {
+    const response = await fetch("/api/clients", { cache: "no-store" });
+    const payload = (await response.json()) as { clients?: AccountingClientRecord[]; error?: string };
+    if (!response.ok) throw new Error(payload.error ?? "Could not load clients.");
+    setClients(payload.clients ?? []);
   }, []);
 
   const loadConnections = useCallback(async () => {
@@ -145,13 +186,13 @@ export function InvoiceIntakeWorkspace() {
     setLoading(true);
     setError("");
     try {
-      await Promise.all([loadInvoices(), loadConnections()]);
+      await Promise.all([loadInvoices(), loadConnections(), loadClients()]);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Could not load invoice workspace.");
     } finally {
       setLoading(false);
     }
-  }, [loadConnections, loadInvoices]);
+  }, [loadClients, loadConnections, loadInvoices]);
 
   useEffect(() => {
     void loadInitial();
@@ -418,7 +459,7 @@ export function InvoiceIntakeWorkspace() {
                         {busy ? "Processing…" : !supportsManualExtraction ? "PDF required" : existingInvoice ? "Extract again" : "Manual Extract"}
                       </button>
                     </div>
-                    {existingInvoice ? <InvoiceDetails invoice={existingInvoice} expanded={existingInvoice.id === selectedInvoiceId} /> : null}
+                    {existingInvoice ? <InvoiceDetails invoice={existingInvoice} clients={clients} onClientUpdated={() => void Promise.all([loadInvoices(), loadClients()])} expanded={existingInvoice.id === selectedInvoiceId} /> : null}
                   </article>
                 );
               })}
@@ -446,7 +487,7 @@ export function InvoiceIntakeWorkspace() {
                       </button>
                     ) : null}
                   </div>
-                  <InvoiceDetails invoice={invoice} expanded={invoice.id === selectedInvoiceId} />
+                  <InvoiceDetails invoice={invoice} clients={clients} onClientUpdated={() => void Promise.all([loadInvoices(), loadClients()])} expanded={invoice.id === selectedInvoiceId} />
                 </article>
               ))}
             </div>
@@ -469,7 +510,233 @@ export function InvoiceIntakeWorkspace() {
   );
 }
 
-function InvoiceDetails({ invoice, expanded = false }: { invoice: InvoiceRecord; expanded?: boolean }) {
+function ClientResolution({ invoice, clients, onSaved }: { invoice: InvoiceRecord; clients: AccountingClientRecord[]; onSaved: () => void }) {
+  const billToName = rawFieldValue(invoice.extractedData?.billToName).trim();
+  const billToAddress = rawFieldValue(invoice.extractedData?.billToAddress).trim();
+  const exactMatches = billToName
+    ? clients.filter((client) => client.legalName.trim().toLocaleLowerCase() === billToName.toLocaleLowerCase())
+    : [];
+  const exactMatchId = exactMatches.length === 1 ? exactMatches[0].id : "";
+  const [selectedClientId, setSelectedClientId] = useState(invoice.accountingClientId ?? exactMatchId);
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState(billToName);
+  const [newAddress, setNewAddress] = useState(billToAddress);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setSelectedClientId(invoice.accountingClientId ?? exactMatchId);
+  }, [exactMatchId, invoice.accountingClientId]);
+
+  async function assignClient() {
+    if (!selectedClientId) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch(`/api/invoices/${encodeURIComponent(invoice.id)}/client`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientId: selectedClientId }),
+      });
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Could not assign the client.");
+      setMessage("Invoice assigned to client.");
+      onSaved();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Could not assign the client.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createClient() {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch("/api/clients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invoiceId: invoice.id, legalName: newName, billingAddress: newAddress }),
+      });
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Could not create the client.");
+      setCreating(false);
+      setMessage("Client created and invoice assigned.");
+      onSaved();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Could not create the client.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="invoice-client-resolution" aria-label="Client assignment">
+      <div className="invoice-client-resolution-heading">
+        <div><strong>Client</strong><span>Bill To is a suggestion; confirm the client for this invoice.</span></div>
+        {exactMatches.length > 0 ? <span className="invoice-client-match-label">Possible match</span> : null}
+      </div>
+      <div className="invoice-client-resolution-controls">
+        <select aria-label="Assign invoice to client" value={selectedClientId} onChange={(event) => setSelectedClientId(event.target.value)} disabled={busy || clients.length === 0}>
+          <option value="">{clients.length ? "Choose a client" : "No clients created yet"}</option>
+          {clients.map((client) => (
+            <option key={client.id} value={client.id}>{client.legalName}</option>
+          ))}
+        </select>
+        <button className="secondary-button" type="button" onClick={() => void assignClient()} disabled={busy || !selectedClientId || selectedClientId === invoice.accountingClientId}>
+          {busy && selectedClientId ? "Saving…" : "Assign"}
+        </button>
+        <button className="secondary-button" type="button" onClick={() => {
+          setNewName(billToName);
+          setNewAddress(billToAddress);
+          setCreating((current) => !current);
+          setError("");
+          setMessage("");
+        }} disabled={busy || !billToName}>
+          {creating ? "Cancel" : "Create from Bill To"}
+        </button>
+      </div>
+      {creating ? (
+        <div className="invoice-client-create-form">
+          <label>Legal name<input value={newName} onChange={(event) => setNewName(event.target.value)} maxLength={300} /></label>
+          <label>Billing address<textarea value={newAddress} onChange={(event) => setNewAddress(event.target.value)} maxLength={2000} rows={3} /></label>
+          <button className="primary-button" type="button" onClick={() => void createClient()} disabled={busy || newName.trim().length < 2}>
+            {busy ? "Creating…" : "Confirm and create client"}
+          </button>
+        </div>
+      ) : null}
+      {message ? <p className="invoice-client-message">{message}</p> : null}
+      {error ? <p className="invoice-client-error">{error}</p> : null}
+    </section>
+  );
+}
+
+function InvoiceCodingPanel({ invoice }: { invoice: InvoiceRecord }) {
+  const [accounts, setAccounts] = useState<GlAccountOption[]>([]);
+  const [suggestions, setSuggestions] = useState<LineCodingSuggestion[]>([]);
+  const [selectedAccounts, setSelectedAccounts] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(false);
+  const [busySuggestionId, setBusySuggestionId] = useState("");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const hasLines = Boolean(invoice.extractedData && Array.isArray(invoice.extractedData.lineItems) && invoice.extractedData.lineItems.length > 0);
+
+  const loadCodingContext = useCallback(async () => {
+    if (!invoice.accountingClientId) return;
+    const [accountResponse, suggestionResponse] = await Promise.all([
+      fetch(`/api/clients/${encodeURIComponent(invoice.accountingClientId)}/accounts`, { cache: "no-store" }),
+      fetch(`/api/invoices/${encodeURIComponent(invoice.id)}/coding`, { cache: "no-store" }),
+    ]);
+    const accountPayload = (await accountResponse.json()) as { accounts?: GlAccountOption[]; error?: string };
+    const suggestionPayload = (await suggestionResponse.json()) as { suggestions?: LineCodingSuggestion[]; error?: string };
+    if (!accountResponse.ok) throw new Error(accountPayload.error ?? "Could not load client GL accounts.");
+    if (!suggestionResponse.ok) throw new Error(suggestionPayload.error ?? "Could not load coding recommendations.");
+    const loadedSuggestions = suggestionPayload.suggestions ?? [];
+    setAccounts(accountPayload.accounts ?? []);
+    setSuggestions(loadedSuggestions);
+    setSelectedAccounts(Object.fromEntries(loadedSuggestions.map((item) => [item.id, item.recommendedGlAccountId ?? ""])));
+  }, [invoice.accountingClientId, invoice.id]);
+
+  useEffect(() => {
+    if (!invoice.accountingClientId || !hasLines) return;
+    void loadCodingContext().catch((loadError: unknown) => {
+      setError(loadError instanceof Error ? loadError.message : "Could not load coding recommendations.");
+    });
+  }, [hasLines, invoice.accountingClientId, loadCodingContext]);
+
+  async function recommendCoding() {
+    setLoading(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`/api/invoices/${encodeURIComponent(invoice.id)}/coding`, { method: "POST" });
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Could not generate coding recommendations.");
+      await loadCodingContext();
+      setNotice("Recommendations saved as an agent run. Review each line before accepting it.");
+    } catch (runError) {
+      setError(runError instanceof Error ? runError.message : "Could not generate coding recommendations.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function reviewSuggestion(suggestion: LineCodingSuggestion, action: "approve" | "reject") {
+    setBusySuggestionId(suggestion.id);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`/api/invoices/${encodeURIComponent(invoice.id)}/coding`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          suggestionId: suggestion.id,
+          action,
+          glAccountId: selectedAccounts[suggestion.id] ?? suggestion.recommendedGlAccountId,
+        }),
+      });
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Could not save your coding decision.");
+      await loadCodingContext();
+      setNotice(action === "approve" ? "Coding approved and review feedback recorded." : "Suggestion rejected and review feedback recorded.");
+    } catch (reviewError) {
+      setError(reviewError instanceof Error ? reviewError.message : "Could not save your coding decision.");
+    } finally {
+      setBusySuggestionId("");
+    }
+  }
+
+  if (!hasLines) return null;
+  return (
+    <section className="invoice-coding-panel">
+      <div className="invoice-coding-heading"><div><strong>GL coding</strong><span>{invoice.accountingClientId ? "Recommendations use this client’s chart of accounts." : "Assign a client before requesting coding."}</span></div>
+        <button className="secondary-button" type="button" onClick={() => void recommendCoding()} disabled={loading || !invoice.accountingClientId || accounts.length === 0}>{loading ? "Reasoning…" : suggestions.length ? "Generate again" : "Suggest GL accounts"}</button>
+      </div>
+      {!invoice.accountingClientId ? <p className="invoice-client-error">Assign this invoice to a client to ground coding in its chart of accounts.</p> : null}
+      {invoice.accountingClientId && accounts.length === 0 ? <p className="client-directory-state">Add accounts in Clients before requesting a recommendation.</p> : null}
+      {suggestions.map((suggestion) => (
+        <div className="invoice-coding-row" key={suggestion.id}>
+          <div className="invoice-coding-reason"><strong>Line {suggestion.lineIndex + 1}: {codingAccountLabel(suggestion, accounts)}</strong><span>{lineDescription(invoice, suggestion.lineIndex)}</span><span>{suggestion.rationale}</span>{suggestion.confidence ? <small>{Math.round(Number(suggestion.confidence) * 100)}% confidence</small> : null}</div>
+          {suggestion.status === "suggested" ? (
+            <div className="invoice-coding-actions">
+              <select aria-label={`GL account for line ${suggestion.lineIndex + 1}`} value={selectedAccounts[suggestion.id] ?? ""} onChange={(event) => setSelectedAccounts((current) => ({ ...current, [suggestion.id]: event.target.value }))}>
+                <option value="">Choose account</option>
+                {accounts.map((account) => <option key={account.id} value={account.id}>{account.code} · {account.name}</option>)}
+              </select>
+              <button className="secondary-button" type="button" onClick={() => void reviewSuggestion(suggestion, "approve")} disabled={busySuggestionId === suggestion.id || !selectedAccounts[suggestion.id]}>{busySuggestionId === suggestion.id ? "Saving…" : "Approve"}</button>
+              <button className="secondary-button" type="button" onClick={() => void reviewSuggestion(suggestion, "reject")} disabled={busySuggestionId === suggestion.id}>Reject</button>
+            </div>
+          ) : <span className={`invoice-coding-status invoice-coding-status-${suggestion.status}`}>{suggestion.status.replaceAll("_", " ")}</span>}
+        </div>
+      ))}
+      {notice ? <p className="invoice-client-message">{notice}</p> : null}
+      {error ? <p className="invoice-client-error">{error}</p> : null}
+    </section>
+  );
+}
+
+function lineDescription(invoice: InvoiceRecord, lineIndex: number): string {
+  const lineItems = invoice.extractedData?.lineItems;
+  if (!Array.isArray(lineItems)) return "Invoice line";
+  return rawFieldValue(lineItems[lineIndex] && typeof lineItems[lineIndex] === "object" && !Array.isArray(lineItems[lineIndex])
+    ? (lineItems[lineIndex] as Record<string, unknown>).description
+    : null) || "Invoice line";
+}
+
+function codingAccountLabel(suggestion: LineCodingSuggestion, accounts: GlAccountOption[]): string {
+  if (suggestion.status === "approved") {
+    const approved = accounts.find((account) => account.id === suggestion.approvedGlAccountId);
+    return approved ? approved.code + " · " + approved.name : "Approved account";
+  }
+  return suggestion.accountCode
+    ? suggestion.accountCode + (suggestion.accountName ? " · " + suggestion.accountName : "")
+    : "No account suggested";
+}
+
+function InvoiceDetails({ invoice, clients, onClientUpdated, expanded = false }: { invoice: InvoiceRecord; clients: AccountingClientRecord[]; onClientUpdated: () => void; expanded?: boolean }) {
   const reviewFields = fieldsNeedingReview(invoice.validationIssues);
   const issues = invoice.validationIssues.map((issue) => {
     if (typeof issue !== "object" || issue === null || Array.isArray(issue)) return "";
@@ -486,8 +753,11 @@ function InvoiceDetails({ invoice, expanded = false }: { invoice: InvoiceRecord;
       ) : null}
       <details className="invoice-result-details" open={expanded}>
         <summary>View extracted fields and evidence</summary>
+        <ClientResolution invoice={invoice} clients={clients} onSaved={onClientUpdated} />
         <div className="invoice-result-fields">
           <Field label="Supplier" detail={readField(invoice.extractedData?.supplierName)} />
+          <Field label="Bill To" detail={readField(invoice.extractedData?.billToName)} />
+          <Field label="Bill To address" detail={readField(invoice.extractedData?.billToAddress)} />
           <Field label="Invoice number" detail={readField(invoice.extractedData?.invoiceNumber)} />
           <Field label="Invoice date" detail={readField(invoice.extractedData?.invoiceDate)} />
           <Field label="Due date" detail={readField(invoice.extractedData?.dueDate)} />
@@ -537,6 +807,7 @@ function InvoiceDetails({ invoice, expanded = false }: { invoice: InvoiceRecord;
             })}
           </div>
         ) : null}
+        <InvoiceCodingPanel invoice={invoice} />
         {issues.length > 0 ? <ul className="invoice-issues">{issues.map((issue, index) => <li key={index}>{issue}</li>)}</ul> : null}
       </details>
     </>

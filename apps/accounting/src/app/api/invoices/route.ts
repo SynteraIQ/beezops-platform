@@ -15,6 +15,7 @@ export async function GET() {
   const rows = await getDatabase()
     .select({
       id: invoices.id,
+      accountingClientId: invoices.accountingClientId,
       connectionId: providerConnections.externalConnectionId,
       sourceFileId: invoices.sourceFileId,
       sourceFileName: invoices.sourceFileName,

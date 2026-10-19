@@ -1,14 +1,16 @@
 import type { JsonObject, JsonValue } from "@beezops/database";
 import type { ToolDefinition } from "@beezops/tools";
 
-export const invoiceExtractionPromptVersion = "invoice-extraction.v4";
-export const invoiceExtractionSchemaVersion = "canonical-invoice.v3";
+export const invoiceExtractionPromptVersion = "invoice-extraction.v5";
+export const invoiceExtractionSchemaVersion = "canonical-invoice.v4";
 
 const invoiceExtractionInstructions = `Extract the invoice into the supplied schema. Do not infer missing values. For each field, set availability to provided when the invoice contains a readable value, not_present only when the invoice clearly does not state the field, and unreadable when the field appears but its value cannot be read. Use a non-empty value only when availability is provided; otherwise value must be null.
 
 Amounts and rates must be decimal strings without currency symbols; a printed rate of 9% is represented as 9. Dates must use YYYY-MM-DD. Currency must use an ISO 4217 three-letter code. For provided fields, include a short exact supporting text excerpt and page number when available. Confidence is a number from 0 to 1 or null. Preserve line items when readable.
 
 Extract detailed tax table rows into taxBreakdown, including HSN/SAC, taxable amount, each printed tax label exactly as shown, its normalized tax type when clear, rate, and amount. For GST invoices, preserve labels such as "CGST OUTPUT 9%" and "SGST OUTPUT 9%" exactly in printedLabel; when the tax type is clear, normalize taxType to "CGST" or "SGST". Also capture IGST, UTGST, cess, or other printed tax components when present. Keep the printed label separate from normalized tax type. Do not assume the invoice is governed by GST or infer tax types, rates, or amounts when the document does not make them clear.
+
+Extract the Bill To name and address exactly as printed when present. Preserve the full address as one readable field; do not treat it as verified client identity and do not infer missing address components.
 
 Do not include bold subtotal or total rows as additional taxBreakdown entries; use the invoice-level subtotal, taxAmount, and totalAmount fields for those totals. The invoice-level taxAmount remains the printed invoice tax total, not a model-calculated total.`;
 
@@ -24,6 +26,8 @@ export interface ExtractedInvoiceField {
 
 export interface ExtractedInvoice {
   supplierName: ExtractedInvoiceField;
+  billToName: ExtractedInvoiceField;
+  billToAddress: ExtractedInvoiceField;
   invoiceNumber: ExtractedInvoiceField;
   invoiceDate: ExtractedInvoiceField;
   dueDate: ExtractedInvoiceField;
@@ -89,6 +93,8 @@ const invoiceSchema = {
   type: "object",
   properties: {
     supplierName: fieldSchema,
+    billToName: fieldSchema,
+    billToAddress: fieldSchema,
     invoiceNumber: fieldSchema,
     invoiceDate: fieldSchema,
     dueDate: fieldSchema,
@@ -139,6 +145,8 @@ const invoiceSchema = {
   },
   required: [
     "supplierName",
+    "billToName",
+    "billToAddress",
     "invoiceNumber",
     "invoiceDate",
     "dueDate",
@@ -173,44 +181,81 @@ function isInvoiceField(value: unknown): value is ExtractedInvoiceField {
     && (value.page === null || (typeof value.page === "number" && Number.isInteger(value.page) && value.page >= 1));
 }
 
-function isLineItem(value: unknown): value is ExtractedInvoice["lineItems"][number] {
-  if (!isRecord(value)) return false;
-  return isInvoiceField(value.description)
-    && isInvoiceField(value.quantity)
-    && isInvoiceField(value.unitPrice)
-    && isInvoiceField(value.amount);
-}
+function invoiceSchemaIssuePaths(value: unknown): string[] {
+  if (!isRecord(value)) return ["invoice"];
 
-function isTaxComponent(value: unknown): value is ExtractedInvoice["taxBreakdown"][number]["taxes"][number] {
-  if (!isRecord(value)) return false;
-  return isInvoiceField(value.printedLabel)
-    && isInvoiceField(value.taxType)
-    && isInvoiceField(value.ratePercent)
-    && isInvoiceField(value.amount);
-}
+  const issues: string[] = [];
+  const invoiceFields = [
+    "supplierName",
+    "billToName",
+    "billToAddress",
+    "invoiceNumber",
+    "invoiceDate",
+    "dueDate",
+    "currency",
+    "subtotal",
+    "taxAmount",
+    "totalAmount",
+  ] as const;
+  for (const field of invoiceFields) {
+    if (!isInvoiceField(value[field])) issues.push(`invoice.${field}`);
+  }
 
-function isTaxBreakdownRow(value: unknown): value is ExtractedInvoice["taxBreakdown"][number] {
-  if (!isRecord(value) || !Array.isArray(value.taxes)) return false;
-  return isInvoiceField(value.hsnSac)
-    && isInvoiceField(value.taxableAmount)
-    && value.taxes.every(isTaxComponent);
+  if (!Array.isArray(value.taxBreakdown)) {
+    issues.push("invoice.taxBreakdown");
+  } else {
+    value.taxBreakdown.forEach((row, rowIndex) => {
+      const rowPath = `invoice.taxBreakdown.${rowIndex}`;
+      if (!isRecord(row)) {
+        issues.push(rowPath);
+        return;
+      }
+      if (!isInvoiceField(row.hsnSac)) issues.push(`${rowPath}.hsnSac`);
+      if (!isInvoiceField(row.taxableAmount)) issues.push(`${rowPath}.taxableAmount`);
+      if (!Array.isArray(row.taxes)) {
+        issues.push(`${rowPath}.taxes`);
+        return;
+      }
+      row.taxes.forEach((tax, taxIndex) => {
+        const taxPath = `${rowPath}.taxes.${taxIndex}`;
+        if (!isRecord(tax)) {
+          issues.push(taxPath);
+          return;
+        }
+        if (!isInvoiceField(tax.printedLabel)) issues.push(`${taxPath}.printedLabel`);
+        if (!isInvoiceField(tax.taxType)) issues.push(`${taxPath}.taxType`);
+        if (!isInvoiceField(tax.ratePercent)) issues.push(`${taxPath}.ratePercent`);
+        if (!isInvoiceField(tax.amount)) issues.push(`${taxPath}.amount`);
+      });
+    });
+  }
+
+  if (!Array.isArray(value.lineItems)) {
+    issues.push("invoice.lineItems");
+  } else {
+    value.lineItems.forEach((lineItem, lineIndex) => {
+      const linePath = `invoice.lineItems.${lineIndex}`;
+      if (!isRecord(lineItem)) {
+        issues.push(linePath);
+        return;
+      }
+      if (!isInvoiceField(lineItem.description)) issues.push(`${linePath}.description`);
+      if (!isInvoiceField(lineItem.quantity)) issues.push(`${linePath}.quantity`);
+      if (!isInvoiceField(lineItem.unitPrice)) issues.push(`${linePath}.unitPrice`);
+      if (!isInvoiceField(lineItem.amount)) issues.push(`${linePath}.amount`);
+    });
+  }
+
+  return issues;
 }
 
 function parseInvoice(value: unknown): ExtractedInvoice {
-  if (!isRecord(value)
-    || !isInvoiceField(value.supplierName)
-    || !isInvoiceField(value.invoiceNumber)
-    || !isInvoiceField(value.invoiceDate)
-    || !isInvoiceField(value.dueDate)
-    || !isInvoiceField(value.currency)
-    || !isInvoiceField(value.subtotal)
-    || !isInvoiceField(value.taxAmount)
-    || !isInvoiceField(value.totalAmount)
-    || !Array.isArray(value.taxBreakdown)
-    || !value.taxBreakdown.every(isTaxBreakdownRow)
-    || !Array.isArray(value.lineItems)
-    || !value.lineItems.every(isLineItem)) {
-    throw new Error("The extraction response did not match the canonical invoice schema.");
+  const issuePaths = invoiceSchemaIssuePaths(value);
+  if (issuePaths.length > 0) {
+    console.error("[accounting:invoice-intake] Structured extraction failed canonical schema validation", {
+      invalidFieldPaths: issuePaths,
+    });
+    throw new Error(`The extraction response did not match the canonical invoice schema. Invalid fields: ${issuePaths.join(", ")}.`);
   }
   return value as unknown as ExtractedInvoice;
 }

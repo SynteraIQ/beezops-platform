@@ -1,0 +1,1 @@
+ALTER TABLE "invoice_line_coding_suggestions" ADD COLUMN "invoice_source_version" varchar(255) NOT NULL;
